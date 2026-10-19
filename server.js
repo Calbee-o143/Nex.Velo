@@ -30,5 +30,5 @@ app.register(fastifyStatic, {
 
 const port = Number(process.env.PORT) || 8080;
 app.listen({ port, host: "0.0.0.0" }).then(() => {
-  console.log(`Nexus proxy running on http://localhost:${port}`);
+  console.log(`Nex.Velo running on http://localhost:${port}`);
 });
