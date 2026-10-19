@@ -97,9 +97,11 @@ self.addEventListener("message", (event) => {
 /* ---------- Fetch ---------- */
 async function handleRequest(event) {
   await settingsReady;
-  await scramjet.loadConfig();
+  // The page creates Scramjet's database on first run; don't break normal requests if it isn't ready yet.
+  let configured = true;
+  try { await scramjet.loadConfig(); } catch (e) { configured = false; }
 
-  if (scramjet.route(event)) {
+  if (configured && scramjet.route(event)) {
     if (adblockEnabled && shouldBlock(event.request)) {
       return emptyResponse(event.request.destination);
     }
