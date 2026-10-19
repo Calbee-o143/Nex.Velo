@@ -109,7 +109,13 @@ async function handleRequest(event) {
     if (adblockEnabled && shouldBlock(event.request)) {
       return emptyResponse(event.request.destination);
     }
-    return scramjet.fetch(event);
+    try {
+      return await scramjet.fetch(event);
+    } catch (err) {
+      // Show the real error inside the page instead of a blank frame
+      const msg = "Nex.Velo proxy error for:\n" + event.request.url + "\n\n" + ((err && err.stack) || String(err));
+      return new Response(msg, { status: 502, headers: { "content-type": "text/plain; charset=utf-8" } });
+    }
   }
   return fetch(event.request);
 }
