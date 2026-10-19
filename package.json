@@ -1,17 +1,17 @@
 {
-  "name": "nexus-proxy",
+  "name": "Nex.Velo",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "build": "node scripts/copy-assets.js"
+    "build": "node scripts/copy-assets.js",
+    "start": "node scripts/copy-assets.js && node server.js"
   },
   "dependencies": {
     "@fastify/static": "latest",
     "@mercuryworkshop/bare-mux": "latest",
     "@mercuryworkshop/libcurl-transport": "latest",
-    "@mercuryworkshop/scramjet": "latest",
+    "@mercuryworkshop/scramjet": "https://github.com/MercuryWorkshop/scramjet/releases/latest/download/scramjet.tgz",
     "@mercuryworkshop/wisp-js": "latest",
     "fastify": "latest"
   }
