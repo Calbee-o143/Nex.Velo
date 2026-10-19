@@ -229,7 +229,7 @@
   const connection = new BareMux.BareMuxConnection("/baremux/worker.js");
 
   async function applyTransport() {
-    await connection.setTransport("/libcurl/index.mjs", [{ websocket: settings.wisp }]);
+    await connection.setTransport("/libcurl/index.mjs", [{ wisp: settings.wisp, websocket: settings.wisp }]);
   }
   async function pushAdblock() {
     const reg = await navigator.serviceWorker.ready;
