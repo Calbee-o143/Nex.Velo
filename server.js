@@ -21,11 +21,12 @@ const app = Fastify({
     }),
 });
 
-app.register(fastifyStatic, {
-  root: publicPath,
-  setHeaders(res, path) {
-    if (path.endsWith("sw.js")) res.setHeader("Cache-Control", "no-cache");
-  },
+app.register(fastifyStatic, { root: publicPath });
+
+// Always re-check the service worker file so updates roll out
+app.addHook("onSend", async (req, reply, payload) => {
+  if (req.url.split("?")[0] === "/sw.js") reply.header("Cache-Control", "no-cache");
+  return payload;
 });
 
 const port = Number(process.env.PORT) || 8080;
