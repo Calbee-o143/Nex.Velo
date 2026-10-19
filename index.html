@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nexus</title>
+<style>
+  :root {
+    --bg: #000;
+    --fg: #fff;
+    --dim: rgba(255,255,255,.55);
+    --line: rgba(255,255,255,.88);
+    --hair: rgba(255,255,255,.14);
+    --glass: rgba(14,14,14,.62);
+    --field-h: 56px;
+    --radius: calc(var(--field-h) * .25); /* 25% of the field's height */
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg);
+    font: 100%/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; font-optical-sizing: auto; }
+  body { display: flex; flex-direction: column; overflow: hidden;
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:active { transform: scale(.94); transition: transform 100ms ease-out; }
+  :focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+
+  /* ---------- Tab bar (translucent chrome) ---------- */
+  #tabbar { display: flex; align-items: center; gap: .25rem; padding: .5rem .625rem;
+    background: var(--glass); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid var(--hair); z-index: 5; }
+  #tabs { display: flex; gap: .25rem; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  #tabs::-webkit-scrollbar { display: none; }
+  .tab { display: flex; align-items: center; gap: .375rem; flex: 0 1 11.5rem; min-width: 5rem; height: 2.125rem;
+    padding: 0 .375rem 0 .75rem; border-radius: .625rem; color: var(--dim); font-size: .8125rem; cursor: pointer;
+    animation: tab-in 260ms cubic-bezier(.2,.9,.3,1) both; }
+  .tab:hover { background: rgba(255,255,255,.06); }
+  .tab[aria-selected="true"] { background: rgba(255,255,255,.13); color: var(--fg); }
+  .tab .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: .005em; }
+  .tab .x { width: 1.375rem; height: 1.375rem; border-radius: 50%; display: grid; place-items: center; opacity: .6; }
+  .tab .x:hover { background: rgba(255,255,255,.16); opacity: 1; }
+  @keyframes tab-in { from { opacity: 0; transform: scale(.9); } }
+  .icon-btn { width: 2.125rem; height: 2.125rem; border-radius: .625rem; display: grid; place-items: center; flex: none; color: var(--dim); }
+  .icon-btn:hover { background: rgba(255,255,255,.08); color: var(--fg); }
+  .icon-btn:disabled { opacity: .3; pointer-events: none; }
+  .icon-btn svg { width: 1.125rem; height: 1.125rem; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ---------- Toolbar (only when a page is open) ---------- */
+  #toolbar { display: none; align-items: center; gap: .25rem; padding: .375rem .625rem;
+    background: var(--glass); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid var(--hair); z-index: 4; }
+  body.browsing #toolbar { display: flex; }
+  #address { flex: 1; min-width: 0; height: 2.25rem; padding: 0 .875rem; color: var(--fg); background: rgba(255,255,255,.07);
+    border: 1px solid transparent; border-radius: .625rem; font: inherit; font-size: .875rem; outline: none; }
+  #address:focus { border-color: var(--line); }
+
+  /* ---------- Views ---------- */
+  #views { position: relative; flex: 1; min-height: 0; }
+  .view { position: absolute; inset: 0; display: none; }
+  .view.active { display: block; }
+  .view iframe { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
+  .home { height: 100%; display: grid; place-items: center; padding: 1.5rem; }
+  .view.has-frame .home { display: none; }
+
+  /* ---------- The input: thin white outline, 25% radius ---------- */
+  .omni { width: min(560px, 100%); }
+  .omni input { width: 100%; height: var(--field-h); padding: 0 1.25rem; background: transparent; color: var(--fg);
+    border: 1px solid var(--line); border-radius: var(--radius); font: inherit; font-size: 1.0625rem;
+    letter-spacing: -.011em; outline: none; transition: box-shadow 160ms ease-out; }
+  .omni input::placeholder { color: var(--dim); }
+  .omni input:focus { box-shadow: 0 0 0 4px rgba(255,255,255,.12); }
+
+  /* ---------- Settings sheet ---------- */
+  #scrim { position: fixed; inset: 0; background: rgba(0,0,0,.55); opacity: 0; pointer-events: none; z-index: 20; }
+  #sheet { position: fixed; left: 50%; bottom: 0; width: min(480px, 100%); z-index: 21; visibility: hidden;
+    margin-left: calc(min(480px, 100vw) / -2); padding: .5rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom, 0px));
+    background: rgba(20,20,20,.72); backdrop-filter: blur(30px) saturate(180%); -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border: 1px solid var(--hair); border-bottom: 0; border-radius: 1.5rem 1.5rem 0 0;
+    box-shadow: 0 -20px 60px rgba(0,0,0,.6); touch-action: none; will-change: transform; }
+  #grab { width: 2.25rem; height: .3125rem; border-radius: 3px; background: rgba(255,255,255,.28); margin: 0 auto .75rem; }
+  #sheet h2 { margin: 0 0 1rem; font-size: 1.25rem; font-weight: 650; line-height: 1.15; letter-spacing: -.02em; }
+  .field { display: block; margin-bottom: 1rem; }
+  .field > span { display: block; margin-bottom: .375rem; font-size: .8125rem; color: var(--dim); letter-spacing: .01em; }
+  .field input[type=text], .field select { width: 100%; height: 2.75rem; padding: 0 .875rem; color: var(--fg);
+    background: rgba(255,255,255,.07); border: 1px solid transparent; border-radius: .75rem; font: inherit; font-size: .9375rem; outline: none; }
+  .field input[type=text]:focus, .field select:focus { border-color: var(--line); }
+  .field select option { background: #141414; }
+  .row { display: flex; gap: .5rem; }
+  .row .field { flex: 1; margin: 0; }
+  .btn { height: 2.75rem; padding: 0 1rem; border-radius: .75rem; background: rgba(255,255,255,.1); font-size: .9375rem; font-weight: 550; flex: none; }
+  .btn:hover { background: rgba(255,255,255,.16); }
+  .btn.primary { background: var(--fg); color: #000; }
+  .btn.primary:hover { background: rgba(255,255,255,.88); }
+  #status { min-height: 1.25rem; margin: .5rem 0 1rem; font-size: .8125rem; color: var(--dim); }
+  #status.ok { color: #7ee2a0; } #status.bad { color: #ff9b9b; }
+  .switch { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .25rem 0 1rem; }
+  .switch b { display: block; font-weight: 550; font-size: .9375rem; }
+  .switch small { color: var(--dim); font-size: .8125rem; }
+  .switch input { appearance: none; -webkit-appearance: none; flex: none; width: 3rem; height: 1.75rem; border-radius: 1rem; background: rgba(255,255,255,.2);
+    position: relative; cursor: pointer; transition: background 200ms ease-out; }
+  .switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: calc(1.75rem - 4px); height: calc(1.75rem - 4px);
+    border-radius: 50%; background: #fff; transition: transform 260ms cubic-bezier(.3,1.4,.5,1); }
+  .switch input:checked { background: #34c759; }
+  .switch input:checked::after { transform: translateX(1.25rem); }
+  .switch input:active::after { width: calc(1.75rem + 2px); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tab { animation: none; }
+    .switch input::after, .switch input { transition: none; }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    #tabbar, #toolbar { background: #0e0e0e; backdrop-filter: none; -webkit-backdrop-filter: none; }
+    #sheet { background: #141414; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  }
+  @media (prefers-contrast: more) { :root { --hair: rgba(255,255,255,.5); } }
+</style>
+</head>
+<body>
+
+<header id="tabbar">
+  <div id="tabs" role="tablist" aria-label="Tabs"></div>
+  <button class="icon-btn" id="new-tab" aria-label="New tab" title="New tab">
+    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+  <button class="icon-btn" id="open-settings" aria-label="Settings" title="Settings">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+  </button>
+</header>
+
+<div id="toolbar">
+  <button class="icon-btn" id="back" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+  <button class="icon-btn" id="forward" aria-label="Forward"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+  <button class="icon-btn" id="reload" aria-label="Reload"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
+  <button class="icon-btn" id="home" aria-label="Close page"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7M6 10v10h12V10"/></svg></button>
+  <input id="address" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Address">
+</div>
+
+<main id="views"></main>
+
+<div id="scrim"></div>
+<section id="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <div id="grab"></div>
+  <h2 id="settings-title">Settings</h2>
+
+  <label class="field">
+    <span>Wisp server</span>
+    <div class="row">
+      <input type="text" id="wisp-url" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="wss://example.com/wisp/">
+    </div>
+  </label>
+  <div class="row" style="margin-bottom:.25rem">
+    <button class="btn" id="wisp-test">Test</button>
+    <button class="btn" id="wisp-default">Use this site</button>
+    <button class="btn primary" id="wisp-save" style="margin-left:auto">Save server</button>
+  </div>
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <label class="field">
+    <span>Search engine</span>
+    <select id="engine">
+      <option value="https://duckduckgo.com/?q=%s">DuckDuckGo</option>
+      <option value="https://www.google.com/search?q=%s">Google</option>
+      <option value="https://www.bing.com/search?q=%s">Bing</option>
+      <option value="https://search.brave.com/search?q=%s">Brave Search</option>
+    </select>
+  </label>
+
+  <label class="switch">
+    <div><b>AdBlock</b><small>Blocks ad and tracker requests in the service worker</small></div>
+    <input type="checkbox" id="adblock" checked>
+  </label>
+</section>
+
+<script src="/baremux/index.js"></script>
+<script src="/scram/scramjet.all.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (s, r = document) => r.querySelector(s);
+  const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const store = {
+    get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  /* ================= Settings state ================= */
+  const defaultWisp = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/wisp/`;
+  const settings = {
+    wisp: store.get("nexus.wisp", defaultWisp),
+    engine: store.get("nexus.engine", "https://duckduckgo.com/?q=%s"),
+    adblock: store.get("nexus.adblock", "1") === "1",
+  };
+
+  /* ================= Scramjet + transport ================= */
+  const { ScramjetController } = $scramjetLoadController();
+  const scramjet = new ScramjetController({
+    prefix: "/scramjet/",
+    files: { wasm: "/scram/scramjet.wasm.wasm", all: "/scram/scramjet.all.js", sync: "/scram/scramjet.sync.js" },
+    codec: { encode: (u) => encodeURIComponent(u), decode: (u) => decodeURIComponent(u) },
+    flags: { captureErrors: true, strictRewrites: true, sourcemaps: true, allowInvalidJs: true, allowFailedIntercepts: true },
+  });
+  const connection = new BareMux.BareMuxConnection("/baremux/worker.js");
+
+  async function applyTransport() {
+    await connection.setTransport("/libcurl/index.mjs", [{ websocket: settings.wisp }]);
+  }
+  async function pushAdblock() {
+    const reg = await navigator.serviceWorker.ready;
+    (reg.active || navigator.serviceWorker.controller)?.postMessage({ type: "adblock", enabled: settings.adblock });
+  }
+
+  const ready = (async () => {
+    if (!("serviceWorker" in navigator)) throw new Error("Service workers aren't supported in this browser.");
+    await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.ready;
+    await scramjet.init();
+    await applyTransport();
+    await pushAdblock();
+  })();
+  ready.catch((e) => console.error("Proxy setup failed:", e));
+
+  /* ================= URL handling ================= */
+  function resolve(raw) {
+    const v = raw.trim();
+    if (!v) return null;
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) return v;
+    if (!/\s/.test(v) && (/^localhost(:\d+)?(\/|$)/i.test(v) || /^[^\s/]+\.[a-z]{2,}(:\d+)?(\/|$|\?|#)/i.test(v))) return "https://" + v;
+    return settings.engine.replace("%s", encodeURIComponent(v));
+  }
+
+  /* ================= Tabs ================= */
+  const tabs = [];
+  let active = null, uid = 0;
+
+  function newTab(url) {
+    const t = { id: ++uid, title: "New tab", url: "", frame: null };
+    t.view = document.createElement("div");
+    t.view.className = "view";
+    t.view.innerHTML = `<div class="home"><form class="omni"><input type="text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Search or enter address" aria-label="Search or enter address"></form></div>`;
+    t.input = $("input", t.view);
+    $("form", t.view).addEventListener("submit", (e) => { e.preventDefault(); go(t, t.input.value); });
+
+    t.chip = document.createElement("div");
+    t.chip.className = "tab"; t.chip.setAttribute("role", "tab");
+    t.chip.innerHTML = `<span class="t"></span><button class="x" aria-label="Close tab"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
+    t.chip.addEventListener("pointerdown", (e) => { if (!e.target.closest(".x")) select(t); }); // respond on press
+    $(".x", t.chip).addEventListener("click", (e) => { e.stopPropagation(); closeTab(t); });
+
+    tabs.push(t);
+    $("#tabs").appendChild(t.chip);
+    $("#views").appendChild(t.view);
+    select(t);
+    paintChip(t);
+    if (url) go(t, url); else t.input.focus();
+    return t;
+  }
+
+  function paintChip(t) { $(".t", t.chip).textContent = t.title; t.chip.title = t.title; }
+
+  function select(t) {
+    active = t;
+    for (const x of tabs) {
+      const on = x === t;
+      x.view.classList.toggle("active", on);
+      x.chip.setAttribute("aria-selected", on);
+    }
+    t.chip.scrollIntoView({ inline: "nearest", block: "nearest" });
+    syncChrome();
+  }
+
+  function closeTab(t) {
+    const i = tabs.indexOf(t);
+    tabs.splice(i, 1);
+    t.chip.remove(); t.view.remove();
+    if (!tabs.length) return newTab();
+    if (active === t) select(tabs[Math.min(i, tabs.length - 1)]);
+  }
+
+  async function go(t, raw) {
+    const url = resolve(raw);
+    if (!url) return;
+    try { await ready; } catch (e) { alert(e.message); return; }
+    if (!t.frame) {
+      t.frame = scramjet.createFrame();
+      t.view.appendChild(t.frame.frame);
+      t.view.classList.add("has-frame");
+      t.frame.frame.addEventListener("load", () => syncTab(t));
+    }
+    t.url = url;
+    t.title = hostOf(url);
+    paintChip(t);
+    t.frame.go(url);
+    if (t === active) syncChrome();
+  }
+
+  function hostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } }
+
+  function liveUrl(t) {
+    if (!t.frame) return "";
+    try { if (t.frame.url) return String(t.frame.url.href || t.frame.url); } catch {}
+    try { return scramjet.decodeUrl(t.frame.frame.contentWindow.location.href); } catch {}
+    return t.url;
+  }
+
+  function syncTab(t) {
+    if (!t.frame) return;
+    const u = liveUrl(t);
+    if (u) t.url = u;
+    let title = "";
+    try { title = t.frame.frame.contentDocument.title; } catch {}
+    t.title = title || hostOf(t.url) || "New tab";
+    paintChip(t);
+    if (t === active) syncChrome();
+  }
+
+  function syncChrome() {
+    const browsing = !!(active && active.frame);
+    document.body.classList.toggle("browsing", browsing);
+    if (browsing && document.activeElement !== $("#address")) $("#address").value = active.url;
+    document.title = active && active.frame ? `${active.title} – Nexus` : "Nexus";
+  }
+  setInterval(() => active && active.frame && syncTab(active), 900); // catches in-page navigation
+
+  /* ================= Toolbar ================= */
+  const hist = (fn) => { try { fn(active.frame.frame.contentWindow.history); } catch {} };
+  $("#back").addEventListener("click", () => hist((h) => h.back()));
+  $("#forward").addEventListener("click", () => hist((h) => h.forward()));
+  $("#reload").addEventListener("click", () => { try { active.frame.frame.contentWindow.location.reload(); } catch { go(active, active.url); } });
+  $("#home").addEventListener("click", () => {
+    const t = active;
+    t.frame.frame.remove(); t.frame = null; t.url = ""; t.title = "New tab";
+    t.view.classList.remove("has-frame"); t.input.value = "";
+    paintChip(t); syncChrome(); t.input.focus();
+  });
+  $("#address").addEventListener("keydown", (e) => { if (e.key === "Enter") { go(active, e.target.value); e.target.blur(); } });
+  $("#address").addEventListener("focus", (e) => e.target.select());
+  $("#new-tab").addEventListener("click", () => newTab());
+
+  /* ================= Spring (critically damped by default) ================= */
+  // response = seconds to reach target, damping 1.0 = no overshoot. Starts from the live value + velocity.
+  let cancelSpring = null;
+  function spring({ from, to, velocity = 0, response = .35, damping = 1 }, onUpdate, onDone) {
+    cancelSpring && cancelSpring();
+    if (reduceMotion()) { onUpdate(to); onDone && onDone(); return; }
+    const k = (2 * Math.PI / response) ** 2, c = 4 * Math.PI * damping / response;
+    let x = from, v = velocity, last = performance.now(), raf;
+    const step = (now) => {
+      let dt = Math.min((now - last) / 1000, 1 / 30); last = now;
+      const sub = Math.max(1, Math.ceil(dt / (1 / 240)));
+      for (let i = 0; i < sub; i++) { const h = dt / sub; v += (-k * (x - to) - c * v) * h; x += v * h; }
+      onUpdate(x);
+      if (Math.abs(x - to) < .3 && Math.abs(v) < 8) { onUpdate(to); cancelSpring = null; onDone && onDone(); return; }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    cancelSpring = () => { cancelAnimationFrame(raf); cancelSpring = null; };
+  }
+
+  /* ================= Settings sheet: draggable, interruptible ================= */
+  const sheet = $("#sheet"), scrim = $("#scrim");
+  let y = 0, isOpen = false, sheetH = 0;
+  const paint = (val) => {
+    y = val;
+    sheet.style.transform = `translate3d(0, ${y}px, 0)`;
+    scrim.style.opacity = String(Math.max(0, 1 - y / (sheetH || 1)));
+  };
+  const rubber = (over, dim = 400, c = .55) => (over * dim * c) / (dim + c * Math.abs(over));
+  const project = (v, d = .998) => (v / 1000) * d / (1 - d);
+
+  function openSheet() {
+    loadSettingsUI();
+    isOpen = true;
+    sheet.style.visibility = "visible"; scrim.style.pointerEvents = "auto";
+    sheetH = sheet.offsetHeight;
+    if (!cancelSpring && y === 0) paint(sheetH);
+    spring({ from: y, to: 0, response: .38, damping: .85 }, paint);
+  }
+  function closeSheet(velocity = 0) {
+    isOpen = false; scrim.style.pointerEvents = "none";
+    sheetH = sheet.offsetHeight;
+    spring({ from: y, to: sheetH, velocity, response: .32, damping: 1 }, paint, () => {
+      if (!isOpen) sheet.style.visibility = "hidden";
+    });
+  }
+  $("#open-settings").addEventListener("click", openSheet);
+  scrim.addEventListener("pointerdown", () => closeSheet());
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && isOpen) closeSheet(); });
+
+  // Drag from the handle area / any non-interactive part of the sheet
+  let drag = null;
+  sheet.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("input, select, button, label")) return;
+    cancelSpring && cancelSpring();                      // grab it mid-flight
+    sheet.setPointerCapture(e.pointerId);
+    drag = { id: e.pointerId, offset: e.clientY - y, hist: [{ t: performance.now(), y: e.clientY }] };
+  });
+  sheet.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const target = e.clientY - drag.offset;               // 1:1, respects where it was grabbed
+    paint(target < 0 ? -rubber(-target) : target);        // resist past the top
+    drag.hist.push({ t: performance.now(), y: e.clientY });
+    if (drag.hist.length > 6) drag.hist.shift();
+  });
+  const endDrag = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const h = drag.hist, a = h[0], b = h[h.length - 1];
+    const v = b.t > a.t ? ((b.y - a.y) / (b.t - a.t)) * 1000 : 0; // px/s at release
+    drag = null;
+    const projected = y + project(v);                     // where the flick is heading
+    if (projected > sheetH * .5) closeSheet(v);
+    else spring({ from: y, to: 0, velocity: v, response: .3, damping: .8 }, paint);
+  };
+  sheet.addEventListener("pointerup", endDrag);
+  sheet.addEventListener("pointercancel", endDrag);
+
+  /* ================= Settings controls ================= */
+  const status = $("#status");
+  function say(msg, kind = "") { status.textContent = msg; status.className = kind; }
+  function loadSettingsUI() {
+    $("#wisp-url").value = settings.wisp;
+    $("#engine").value = settings.engine;
+    $("#adblock").checked = settings.adblock;
+    say("");
+  }
+  function normalizeWisp(v) {
+    v = v.trim();
+    if (!v) return "";
+    if (/^https?:\/\//i.test(v)) v = v.replace(/^http/i, "ws");
+    if (!/^wss?:\/\//i.test(v)) v = "wss://" + v;
+    return v.endsWith("/") ? v : v + "/";
+  }
+  function testWisp(url) {
+    return new Promise((resolve) => {
+      let done = false, ws;
+      const finish = (ok) => { if (!done) { done = true; try { ws.close(); } catch {} resolve(ok); } };
+      try { ws = new WebSocket(url); } catch { return resolve(false); }
+      ws.onopen = () => finish(true); ws.onerror = () => finish(false);
+      setTimeout(() => finish(false), 6000);
+    });
+  }
+  $("#wisp-test").addEventListener("click", async () => {
+    const url = normalizeWisp($("#wisp-url").value);
+    if (!url) return say("Enter a Wisp server address.", "bad");
+    say("Testing connection…");
+    const ok = await testWisp(url);
+    say(ok ? "Server is reachable." : "Couldn't connect. Check the address and that it ends in /wisp/.", ok ? "ok" : "bad");
+  });
+  $("#wisp-default").addEventListener("click", () => { $("#wisp-url").value = defaultWisp; say(""); });
+  $("#wisp-save").addEventListener("click", async () => {
+    const url = normalizeWisp($("#wisp-url").value);
+    if (!url) return say("Enter a Wisp server address.", "bad");
+    settings.wisp = url; store.set("nexus.wisp", url);
+    $("#wisp-url").value = url;
+    try { await applyTransport(); say("Server saved. New requests will use it.", "ok"); }
+    catch { say("Couldn't switch servers. Reload the page and try again.", "bad"); }
+  });
+  $("#engine").addEventListener("change", (e) => { settings.engine = e.target.value; store.set("nexus.engine", settings.engine); });
+  $("#adblock").addEventListener("change", (e) => {
+    settings.adblock = e.target.checked; store.set("nexus.adblock", settings.adblock ? "1" : "0");
+    pushAdblock();
+  });
+
+  /* ================= Start ================= */
+  newTab();
+})();
+</script>
+</body>
+</html>
