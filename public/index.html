@@ -104,6 +104,17 @@
   .switch input:checked::after { transform: translateX(1.25rem); }
   .switch input:active::after { width: calc(1.75rem + 2px); }
 
+
+  /* ---------- Debug panel ---------- */
+  #dbg-btn { position: fixed; left: .75rem; bottom: calc(.75rem + env(safe-area-inset-bottom, 0px)); z-index: 30; height: 2rem; padding: 0 .75rem;
+    border-radius: 1rem; background: rgba(255,255,255,.12); color: var(--dim); font-size: .75rem; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  #dbg { position: fixed; left: .75rem; right: .75rem; bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px)); max-height: 55vh; z-index: 30; display: none;
+    flex-direction: column; background: rgba(12,12,12,.94); border: 1px solid var(--hair); border-radius: .875rem; overflow: hidden; }
+  #dbg.open { display: flex; }
+  #dbg .bar { display: flex; gap: .375rem; padding: .5rem; border-bottom: 1px solid var(--hair); }
+  #dbg .bar button { height: 1.875rem; padding: 0 .75rem; border-radius: .5rem; background: rgba(255,255,255,.1); font-size: .75rem; }
+  #dbg pre { margin: 0; padding: .625rem; overflow: auto; font: .6875rem/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; user-select: text; }
+
   @media (prefers-reduced-motion: reduce) {
     .tab { animation: none; }
     .switch input::after, .switch input { transition: none; }
@@ -171,6 +182,22 @@
   </label>
 </section>
 
+<button id="dbg-btn" type="button">Debug</button>
+<div id="dbg"><div class="bar"><button id="dbg-test" type="button">Test proxy</button><button id="dbg-copy" type="button">Copy</button><button id="dbg-clear" type="button">Clear</button></div><pre id="dbg-log"></pre></div>
+
+<script>
+(() => {
+  const lines = [];
+  const render = () => { const el = document.getElementById("dbg-log"); if (el) { el.textContent = lines.join("\n"); el.scrollTop = el.scrollHeight; } };
+  window.__dbg = (...a) => { lines.push(new Date().toISOString().slice(11, 19) + " " + a.map((x) => (x && x.stack) ? x.stack : (typeof x === "object" ? (() => { try { return JSON.stringify(x); } catch { return String(x); } })() : String(x))).join(" ")); if (lines.length > 300) lines.shift(); render(); };
+  window.__dbgLines = lines; window.__dbgRender = render;
+  addEventListener("error", (e) => __dbg("ERROR", e.message, (e.filename || "") + ":" + (e.lineno || "")));
+  addEventListener("unhandledrejection", (e) => __dbg("REJECTION", e.reason));
+  for (const k of ["error", "warn"]) { const o = console[k].bind(console); console[k] = (...a) => { __dbg("console." + k, ...a); o(...a); }; }
+  navigator.serviceWorker && navigator.serviceWorker.addEventListener("message", (e) => __dbg("sw says", e.data));
+})();
+</script>
+
 <script src="/baremux/index.js"></script>
 <script src="/scram/scramjet.all.js"></script>
 <script>
@@ -211,13 +238,18 @@
 
   const ready = (async () => {
     if (!("serviceWorker" in navigator)) throw new Error("Service workers aren't supported in this browser.");
+    __dbg("setup: starting; wisp =", settings.wisp);
     await scramjet.init();   // create Scramjet's database before the service worker starts
+    __dbg("setup: scramjet.init ok");
     await navigator.serviceWorker.register("/sw.js", { scope: "/" });
     await navigator.serviceWorker.ready;
+    __dbg("setup: service worker ready; page controlled =", !!navigator.serviceWorker.controller);
     await applyTransport();
+    __dbg("setup: transport set");
     await pushAdblock();
+    __dbg("setup: done");
   })();
-  ready.catch((e) => console.error("Proxy setup failed:", e));
+  ready.catch((e) => { __dbg("SETUP FAILED", e); console.error("Proxy setup failed:", e); });
 
   /* ================= URL handling ================= */
   function resolve(raw) {
@@ -284,12 +316,13 @@
       t.frame = scramjet.createFrame();
       t.view.appendChild(t.frame.frame);
       t.view.classList.add("has-frame");
-      t.frame.frame.addEventListener("load", () => syncTab(t));
+      t.frame.frame.addEventListener("load", () => { __dbg("frame loaded:", (() => { try { return t.frame.frame.contentWindow.location.href; } catch (e) { return "(unreadable)"; } })()); syncTab(t); });
     }
     t.url = url;
     t.title = hostOf(url);
     paintChip(t);
-    t.frame.go(url);
+    __dbg("go:", url);
+    try { t.frame.go(url); } catch (e) { __dbg("frame.go threw", e); }
     if (t === active) syncChrome();
   }
 
@@ -458,6 +491,22 @@
   $("#adblock").addEventListener("change", (e) => {
     settings.adblock = e.target.checked; store.set("nexus.adblock", settings.adblock ? "1" : "0");
     pushAdblock();
+  });
+
+  /* ================= Debug panel ================= */
+  $("#dbg-btn").addEventListener("click", () => { $("#dbg").classList.toggle("open"); window.__dbgRender(); });
+  $("#dbg-clear").addEventListener("click", () => { window.__dbgLines.length = 0; window.__dbgRender(); });
+  $("#dbg-copy").addEventListener("click", async () => { try { await navigator.clipboard.writeText(window.__dbgLines.join("\n")); __dbg("copied to clipboard"); } catch { __dbg("copy failed - select the text and copy manually"); } });
+  $("#dbg-test").addEventListener("click", async () => {
+    __dbg("test: waiting for setup…");
+    try { await ready; } catch (e) { return __dbg("test: setup failed", e); }
+    const target = "https://example.com/";
+    __dbg("test: controlled =", !!navigator.serviceWorker.controller);
+    try {
+      const r = await fetch("/scramjet/" + encodeURIComponent(target));
+      const t = await r.text();
+      __dbg("test: status", r.status, "| first 400 chars:\n" + t.slice(0, 400));
+    } catch (e) { __dbg("test: fetch failed", e); }
   });
 
   /* ================= Start ================= */
