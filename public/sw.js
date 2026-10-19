@@ -96,8 +96,12 @@ self.addEventListener("message", (event) => {
 
 /* ---------- Fetch ---------- */
 async function handleRequest(event) {
+  // Only touch Scramjet for proxied URLs. Opening its database from the worker before the page
+  // has created it leaves an empty database behind, which is what caused the IndexedDB error.
+  const url = new URL(event.request.url);
+  if (!url.pathname.startsWith(PREFIX)) return fetch(event.request);
+
   await settingsReady;
-  // The page creates Scramjet's database on first run; don't break normal requests if it isn't ready yet.
   let configured = true;
   try { await scramjet.loadConfig(); } catch (e) { configured = false; }
 
