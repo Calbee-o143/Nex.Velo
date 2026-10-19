@@ -3,9 +3,6 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { server as wisp, logging } from "@mercuryworkshop/wisp-js/server";
-import { scramjetPath } from "@mercuryworkshop/scramjet/path";
-import { libcurlPath } from "@mercuryworkshop/libcurl-transport";
-import { baremuxPath } from "@mercuryworkshop/bare-mux/node";
 
 const publicPath = fileURLToPath(new URL("./public/", import.meta.url));
 
@@ -30,9 +27,6 @@ app.register(fastifyStatic, {
     if (path.endsWith("sw.js")) res.setHeader("Cache-Control", "no-cache");
   },
 });
-app.register(fastifyStatic, { root: scramjetPath, prefix: "/scram/", decorateReply: false });
-app.register(fastifyStatic, { root: libcurlPath, prefix: "/libcurl/", decorateReply: false });
-app.register(fastifyStatic, { root: baremuxPath, prefix: "/baremux/", decorateReply: false });
 
 const port = Number(process.env.PORT) || 8080;
 app.listen({ port, host: "0.0.0.0" }).then(() => {
