@@ -11,7 +11,7 @@
     "@fastify/static": "latest",
     "@mercuryworkshop/bare-mux": "latest",
     "@mercuryworkshop/libcurl-transport": "latest",
-    "@mercuryworkshop/scramjet": "https://github.com/MercuryWorkshop/scramjet/releases/latest/download/scramjet.tgz",
+    "@mercuryworkshop/scramjet": "1.1.0",
     "@mercuryworkshop/wisp-js": "latest",
     "fastify": "latest"
   }
