@@ -1,5 +1,5 @@
 {
-  "name": "Nex.Velo",
+  "name": "nex-velo",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "@fastify/static": "latest",
-    "@mercuryworkshop/bare-mux": "latest",
-    "@mercuryworkshop/libcurl-transport": "latest",
+    "@mercuryworkshop/bare-mux": "^2.0.0",
+    "@mercuryworkshop/libcurl-transport": "^1.0.0",
     "@mercuryworkshop/scramjet": "1.1.0",
     "@mercuryworkshop/wisp-js": "latest",
     "fastify": "latest"
