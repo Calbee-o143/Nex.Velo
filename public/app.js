@@ -15,7 +15,7 @@
   const settings = {
     wisp: defaultWisp, engine: "https://duckduckgo.com/?q=%s", adblock: true,
     theme: "black", wall: "none", wallUrl: "", blur: true, blurAmt: 14,
-    clock: true, h24: true, music: true, games: true, name: "",
+    clock: true, h24: true, music: true, games: true, ai: true, name: "",
   };
   try { Object.assign(settings, JSON.parse(LS.get("nexvelo.settings", "{}"))); } catch {}
   if (LS.get("nexvelo.settings") == null) { // carry over values saved by the first version
@@ -50,42 +50,6 @@
     raf = requestAnimationFrame(step);
     return () => { dead = true; cancelAnimationFrame(raf); };
   }
-
-  /* ================= Modals ================= */
-  const scrim = $("#scrim");
-  let currentModal = null;
-  function makeModal(el) {
-    let p = 0, cancel = null, isOpen = false;
-    const paint = (v) => {
-      p = v;
-      el.style.setProperty("--o", Math.min(1, Math.max(0, v)));
-      el.style.setProperty("--s", .96 + .04 * v);
-      if (currentModal === api || !currentModal) scrim.style.opacity = Math.min(1, Math.max(0, v));
-    };
-    const api = {
-      el,
-      get isOpen() { return isOpen; },
-      open() {
-        if (isOpen) return;
-        if (currentModal && currentModal !== api) currentModal.close();
-        currentModal = api; isOpen = true;
-        el.style.display = "block"; scrim.style.pointerEvents = "auto";
-        cancel && cancel();
-        cancel = spring({ from: p, to: 1, response: .38, damping: .85 }, paint);
-      },
-      close() {
-        if (!isOpen) return;
-        isOpen = false; if (currentModal === api) { currentModal = null; scrim.style.pointerEvents = "none"; }
-        cancel && cancel();
-        cancel = spring({ from: p, to: 0, response: .28, damping: 1 }, paint, () => { if (!isOpen) { el.style.display = "none"; if (!currentModal) scrim.style.opacity = 0; } });
-      },
-    };
-    $("[data-close]", el)?.addEventListener("click", () => api.close());
-    return api;
-  }
-    const musicModal = makeModal($("#music"));
-  scrim.addEventListener("pointerdown", () => currentModal && currentModal.close());
-  addEventListener("keydown", (e) => { if (e.key === "Escape" && currentModal) currentModal.close(); });
 
   /* ================= Scramjet + transport ================= */
   const { ScramjetController } = $scramjetLoadController();
@@ -134,7 +98,8 @@
   const THEMES = [["black", "midnight", "#0a0a0b"], ["white", "paper", "#f6f6f4"], ["sage", "sage", "#c9dcc0"], ["lavender", "lavender", "#d4c9ec"], ["rose", "rose", "#f2c6cd"], ["sky", "sky", "#c3dcf2"], ["peach", "peach", "#f6d2b8"]];
   const WALLS = { none: null, forest: () => NVWalls.forest(), ocean: () => NVWalls.ocean(), sky: () => NVWalls.sky() };
   const wallCache = {};
-  const wallSrc = (k) => (k === "custom" ? settings.wallUrl : (wallCache[k] ??= WALLS[k] ? WALLS[k]() : null));
+  const wallData = () => LS.get("nexvelo.wallpaper", "");
+  const wallSrc = (k) => (k === "custom" ? wallData() || settings.wallUrl : (wallCache[k] ??= WALLS[k] ? WALLS[k]() : null));
 
   function applyTheme() { document.documentElement.dataset.theme = settings.theme; }
   function applyWall() {
@@ -218,7 +183,7 @@
   // kinds: "web" (home page or a proxied site), "settings", "games"
   const tabs = [];
   let active = null, uid = 0, restoring = false;
-  const PAGES = { settings: $("#page-settings"), games: $("#page-games") };
+  const PAGES = { settings: $("#page-settings"), music: $("#page-music"), ai: $("#page-ai") };
   const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   const isHome = (t) => t.kind === "web" && !t.frame;
 
@@ -250,7 +215,7 @@
     if (opts.url && opts.lazy) { t.pendingUrl = opts.url; t.title = hostOf(opts.url); }
     paintChip(t); select(t); tickClock();
     if (kind === "settings") loadSettingsUI();
-    if (kind === "games" && NV.onGamesOpen) NV.onGamesOpen();
+    if (kind === "ai" && NV.onAiOpen) NV.onAiOpen();
     if (opts.url && !opts.lazy) go(t, opts.url);
     else if (kind === "web" && !opts.lazy) t.input.focus({ preventScroll: true });
     return t;
@@ -263,14 +228,20 @@
     t.chip.scrollIntoView({ inline: "nearest", block: "nearest" });
     if (t.pendingUrl && !restoring) { const u = t.pendingUrl; t.pendingUrl = null; go(t, u); }
     syncChrome(); saveTabs();
+    window.NV && NV.onTab && NV.onTab(t);
   }
   function closeTab(t) {
-    const i = tabs.indexOf(t);
+    const i = tabs.indexOf(t), wasActive = active === t;
     if (t.loader) loaderStop(t.loader);
-    if (PAGES[t.kind]) $("#pages").appendChild(PAGES[t.kind]);   // park the page node again
-    tabs.splice(i, 1); t.chip.remove(); t.view.remove();
+    tabs.splice(i, 1);
+    t.chip.classList.add("closing"); t.view.classList.remove("active"); t.view.classList.add("leaving");
+    setTimeout(() => {   // let the close animation play, then clean up
+      const node = PAGES[t.kind];
+      if (node && node.parentNode === t.view) $("#pages").appendChild(node);
+      t.chip.remove(); t.view.remove();
+    }, reduceMotion() ? 0 : 190);
     if (!tabs.length) return newTab();
-    if (active === t) select(tabs[Math.min(i, tabs.length - 1)]); else saveTabs();
+    if (wasActive) select(tabs[Math.min(i, tabs.length - 1)]); else saveTabs();
   }
   function openPage(kind) {
     const ex = tabs.find((t) => t.kind === kind);
@@ -359,10 +330,13 @@
     $("#swatches").innerHTML = THEMES.map(([id, label, c]) => `<button class="sw${settings.theme === id ? " on" : ""}" data-theme="${id}"><i style="--c:${c}"></i>${label}</button>`).join("");
     const walls = [["none", "none"], ["forest", "forest"], ["ocean", "ocean"], ["sky", "sky"], ["custom", "custom"]];
     $("#walls").innerHTML = walls.map(([id, label]) => {
-      const thumb = id === "custom" ? "" : id === "none" ? "" : `style="background-image:url('${wallSrc(id)}')"`;
-      return `<button class="wt${settings.wall === id ? " on" : ""}" data-wall="${id}"><i ${thumb}>${id === "none" ? "–" : id === "custom" ? "+" : ""}</i>${label}</button>`;
+      const src = id === "none" ? null : wallSrc(id);
+      const thumb = src && /^(https?:|data:image\/)/i.test(src) ? `style="background-image:url('${src.replace(/'/g, "%27")}')"` : "";
+      return `<button class="wt${settings.wall === id ? " on" : ""}" data-wall="${id}"><i ${thumb}>${thumb ? "" : id === "none" ? "–" : id === "custom" ? "+" : ""}</i>${label}</button>`;
     }).join("");
-    $("#wall-url-fld").hidden = settings.wall !== "custom";
+    $("#wall-custom").hidden = settings.wall !== "custom";
+    $("#wall-clear").hidden = !wallData();
+    $("#wall-note").textContent = wallData() ? "using your uploaded image" : "";
     $("#blur-opts").hidden = settings.wall === "none";
     $("#blur-amt-fld").hidden = !settings.blur;
   }
@@ -374,7 +348,29 @@
     const b = e.target.closest("[data-wall]"); if (!b) return;
     settings.wall = b.dataset.wall; save(); applyWall(); buildAppearance();
   });
-  $("#wall-url").addEventListener("change", (e) => { settings.wallUrl = e.target.value.trim(); save(); applyWall(); });
+  $("#wall-url").addEventListener("change", (e) => { settings.wallUrl = e.target.value.trim(); LS.del("nexvelo.wallpaper"); save(); applyWall(); buildAppearance(); });
+  async function shrinkImage(file) {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const k = Math.min(1, 1920 / Math.max(img.width, img.height));
+    const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+    let q = .85, data = c.toDataURL("image/jpeg", q);
+    while (data.length > 2800000 && q > .4) { q -= .15; data = c.toDataURL("image/jpeg", q); }
+    return data;
+  }
+  $("#wall-upload").addEventListener("click", () => $("#wall-file").click());
+  $("#wall-file").addEventListener("change", async (e) => {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    if (!f.type.startsWith("image/")) return toast("that isn't an image");
+    try {
+      const data = await shrinkImage(f);
+      LS.set("nexvelo.wallpaper", data);
+      if (LS.get("nexvelo.wallpaper", "") !== data) throw new Error("storage full");
+      settings.wall = "custom"; save(); applyWall(); buildAppearance(); toast("wallpaper set");
+    } catch { LS.del("nexvelo.wallpaper"); toast("couldn't use that image. try a smaller one."); }
+  });
+  $("#wall-clear").addEventListener("click", () => { LS.del("nexvelo.wallpaper"); applyWall(); buildAppearance(); });
   $("#blur").addEventListener("change", (e) => { settings.blur = e.target.checked; save(); applyWall(); buildAppearance(); });
   $("#blur-amt").addEventListener("input", (e) => { settings.blurAmt = +e.target.value; save(); applyWall(); });
 
@@ -382,7 +378,7 @@
     $("#wisp-url").value = settings.wisp; $("#engine").value = settings.engine;
     $("#adblock").checked = settings.adblock; $("#clock").checked = settings.clock; $("#h24").checked = settings.h24;
     $("#blur").checked = settings.blur; $("#blur-amt").value = settings.blurAmt; $("#wall-url").value = settings.wallUrl;
-    $("#music-on").checked = settings.music; $("#games-on").checked = settings.games; $("#name").value = settings.name;
+    $("#music-on").checked = settings.music; $("#games-on").checked = settings.games; $("#ai-on").checked = settings.ai; $("#name").value = settings.name;
     buildAppearance(); say("");
     NV.refreshMusicChips && NV.refreshMusicChips();
   }
@@ -418,11 +414,12 @@
   $("#clock").addEventListener("change", (e) => { settings.clock = e.target.checked; save(); tickClock(); });
   $("#h24").addEventListener("change", (e) => { settings.h24 = e.target.checked; save(); tickClock(); });
   $("#music-on").addEventListener("change", (e) => { settings.music = e.target.checked; save(); NV.applyMusicToggle && NV.applyMusicToggle(); });
+  $("#ai-on").addEventListener("change", (e) => { settings.ai = e.target.checked; save(); $("#open-ai").hidden = !settings.ai; });
   $("#games-on").addEventListener("change", (e) => { settings.games = e.target.checked; save(); $("#open-games").hidden = !settings.games; });
   $("#name").addEventListener("input", (e) => { settings.name = e.target.value.trim(); save(); tickClock(); });
 
   /* account: backup / restore / reset */
-  const DATA_KEYS = ["nexvelo.settings", "nexvelo.playlists", "nexvelo.recent", "nexvelo.music", "nexvelo.tabs", "nexvelo.games"];
+  const DATA_KEYS = ["nexvelo.settings", "nexvelo.playlists", "nexvelo.recent", "nexvelo.music", "nexvelo.tabs", "nexvelo.ai"];
   $("#exp").addEventListener("click", () => {
     const out = {}; DATA_KEYS.forEach((k) => { out[k] = LS.get(k, null); });
     const a = document.createElement("a");
@@ -447,13 +444,13 @@
   const STEPS = [
     ["#tabs", "these are your tabs. every tab is its own proxied page."],
     ["#new-tab", "open a new tab here."],
+    ["#open-ai", "an ai assistant in its own tab."],
     ["#open-games", "a library of browser games. pick one and it opens in its own tab."],
     ["#open-music", "search youtube music and soundcloud at once. playlists and recents live here too."],
     ["#open-settings", "themes, wallpapers, your wisp server and more."],
     [".view.active .omni", "type a search or a web address and press enter."],
   ];
   function startTour() {
-    currentModal && currentModal.close();
     const steps = STEPS.filter(([s]) => { const el = $(s); return el && el.offsetParent !== null; });
     if (!steps.length) return;
     let i = 0;
@@ -477,10 +474,16 @@
   $("#tour-btn").addEventListener("click", startTour);
 
   /* ================= Boot ================= */
-  const NV = window.NV = { settings, save, esc, toast, spring, makeModal, musicModal, openSettings, openPage, openUrl: (u) => newTab({ url: u }), LS };
+  const NV = window.NV = { settings, save, esc, toast, spring, openSettings, openPage, openUrl: (u) => newTab({ url: u }), LS };
   applyTheme(); applyWall();
   $("#open-games").hidden = !settings.games;
-  $("#open-games").addEventListener("click", () => openPage("games"));
+  $("#open-ai").hidden = !settings.ai;
+  $("#open-ai").addEventListener("click", () => openPage("ai"));
+  $("#open-games").addEventListener("click", () => {
+    const ex = tabs.find((t) => t.kind === "web" && /\/games\.html/.test(t.url || t.pendingUrl || ""));
+    if (ex) select(ex); else newTab({ url: location.origin + "/games.html" });
+  });
+  $("#logo").addEventListener("click", () => newTab());
   restoring = true;
   let saved = null; try { saved = JSON.parse(LS.get("nexvelo.tabs", "null")); } catch {}
   if (saved && saved.t && saved.t.length) {
