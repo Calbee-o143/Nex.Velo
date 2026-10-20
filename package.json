@@ -17,6 +17,7 @@
   },
   "optionalDependencies": {
     "soundcloud.ts": "latest",
-    "ytmusic-api": "latest"
+    "ytmusic-api": "latest",
+    "@distube/ytdl-core": "latest"
   }
 }
