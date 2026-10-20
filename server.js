@@ -194,85 +194,86 @@ app.get("/api/music/alt", async (req, reply) => {
   } catch (e) { reply.code(502); return { track: null, error: String(e?.message || e) }; }
 });
 
-/* ================= Games (GN Math + any extra sources) ================= */
-// Add more sources with the GAMES_SOURCES env var: [{"key":"x","zones":"https://…/zones.json","cover":"https://…","html":"https://…"}]
-const GAME_SOURCES = (() => {
-  const base = [{
-    key: "gn",
-    zones: ["https://cdn.jsdelivr.net/gh/gn-math/assets@main/zones.json", "https://raw.githubusercontent.com/gn-math/assets/main/zones.json"],
-    cover: "https://cdn.jsdelivr.net/gh/gn-math/covers@main",
-    html: "https://cdn.jsdelivr.net/gh/gn-math/html@main",
-  }];
-  try { if (process.env.GAMES_SOURCES) base.push(...JSON.parse(process.env.GAMES_SOURCES)); } catch (e) { console.warn("bad GAMES_SOURCES:", e.message); }
-  return base;
-})();
-const ALLOWED_HOSTS = new Set(["cdn.jsdelivr.net", "fastly.jsdelivr.net", "gcore.jsdelivr.net", "raw.githubusercontent.com"]);
-const okHost = (u) => { try { const x = new URL(u); return x.protocol === "https:" && ALLOWED_HOSTS.has(x.hostname); } catch { return false; } };
+/* ================= Lyrics (LRCLIB, the same free community library Versed uses) ================= */
+const lyricCache = new Map();
+const cleanTitle = (t) =>
+  String(t || "").replace(/\(.*?\)|\[.*?\]/g, " ")
+    .replace(/\b(official|music video|video|audio|lyrics?|lyric video|visuali[sz]er|hd|4k|remaster(ed)?( \d{4})?)\b/gi, " ")
+    .replace(/\s*[-–]\s*topic$/i, "").replace(/\s*(feat|ft)\.?\s.*$/i, "").replace(/\s+/g, " ").trim();
 
-let gamesCache = { t: 0, list: [], map: new Map(), errors: [] };
-async function loadGames() {
-  if (Date.now() - gamesCache.t < 60 * 60 * 1000 && gamesCache.list.length) return gamesCache;
-  const list = [], map = new Map(), errors = [];
-  for (const src of GAME_SOURCES) {
-    let raw = null;
-    for (const z of [].concat(src.zones)) {
-      try {
-        const r = await withTimeout(fetch(z, { headers: { "user-agent": UA } }), 15000);
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        raw = await r.json(); break;
-      } catch (e) { errors.push(`${src.key}: ${z} → ${e.message}`); }
-    }
-    if (!raw) continue;
-    const arr = Array.isArray(raw) ? raw : raw.games || raw.zones || Object.values(raw);
-    arr.forEach((g, i) => {
-      if (!g || typeof g !== "object") return;
-      const fill = (s) => String(s || "").replace("{COVER_URL}", src.cover).replace("{HTML_URL}", src.html);
-      const abs = (s, b) => (s && !/^https?:/i.test(s) ? `${b}/${s.replace(/^\//, "")}` : s);
-      const id = String(g.id ?? i);
-      const url = abs(fill(g.url || g.html || g.path), src.html) || `${src.html}/${id}.html`;
-      const cover = abs(fill(g.cover || g.image || g.thumbnail || g.thumb), src.cover) || `${src.cover}/${id}.png`;
-      const name = String(g.name || g.title || "").trim();
-      if (!name) return;
-      const game = { id: `${src.key}-${id}`, name, url, cover };
-      list.push(game); map.set(game.id, game);
-    });
+function parseLrc(lrc) {
+  const out = [];
+  for (const line of String(lrc || "").split(/\r?\n/)) {
+    const stamps = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    if (!stamps.length) continue;
+    const text = line.replace(/\[[^\]]*\]/g, "").trim();
+    for (const m of stamps) out.push({ t: +m[1] * 60 + parseFloat(m[2]), text });
   }
-  list.sort((a, b) => a.name.localeCompare(b.name));
-  if (list.length) gamesCache = { t: Date.now(), list, map, errors };
-  else gamesCache = { ...gamesCache, errors };
-  return gamesCache;
+  return out.sort((x, y) => x.t - y.t);
 }
-app.get("/api/games", async (req, reply) => {
-  const c = await loadGames();
-  if (!c.list.length) { reply.code(502); return { games: [], errors: c.errors }; }
-  return { games: c.list.map((g) => ({ id: g.id, name: g.name, cover: "/api/img?u=" + encodeURIComponent(g.cover) })), errors: c.errors };
+
+app.get("/api/lyrics", async (req, reply) => {
+  let title = cleanTitle(req.query?.title), artist = cleanTitle(req.query?.artist);
+  const dur = Number(req.query?.dur) || 0;
+  if (!title) { reply.code(400); return { error: "missing title" }; }
+  const parts = title.split(/\s+[-–]\s+/);
+  if (parts.length === 2) {
+    const a = norm(artist), p0 = norm(parts[0]);
+    if (!a || a.includes(p0) || p0.includes(a)) { artist = artist || parts[0]; title = parts[1]; }
+  }
+  const ck = norm(artist + " " + title) + "|" + Math.round(dur / 5);
+  const hit = lyricCache.get(ck);
+  if (hit && Date.now() - hit.t < 6 * 60 * 60 * 1000) return hit.v;
+  const H = { headers: { "user-agent": "Nex.Velo (https://github.com/Calbee-o143/Nex.Velo)" } };
+  const urls = [
+    `https://lrclib.net/api/search?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`,
+    `https://lrclib.net/api/search?q=${encodeURIComponent((artist + " " + title).trim())}`,
+  ];
+  let best = null;
+  for (const u of urls) {
+    try {
+      const r = await withTimeout(fetch(u, H), 9000);
+      if (!r.ok) continue;
+      const rows = (await r.json()).filter((x) => x.syncedLyrics || x.plainLyrics || x.instrumental);
+      for (const x of rows) {
+        let sc = 0.6 * score(title, { title: x.trackName, artist: x.artistName });
+        if (dur && x.duration && Math.abs(x.duration - dur) <= 4) sc += 0.3;
+        if (x.syncedLyrics) sc += 0.2;
+        if (!best || sc > best.sc) best = { sc, x };
+      }
+      if (best && best.sc > 0.6) break;
+    } catch {}
+  }
+  const v = best && best.sc > 0.25
+    ? { found: true, instrumental: !!best.x.instrumental, synced: parseLrc(best.x.syncedLyrics), plain: best.x.plainLyrics || "", title: best.x.trackName, artist: best.x.artistName }
+    : { found: false };
+  lyricCache.set(ck, { t: Date.now(), v });
+  return v;
 });
-app.get("/api/img", async (req, reply) => {
-  const u = String(req.query?.u || "");
-  if (!okHost(u)) { reply.code(400); return "bad url"; }
+
+/* ================= AI chat (Groq, OpenAI GPT OSS models) ================= */
+// Set GROQ_API_KEY on the server, or each person pastes their own key in the AI tab (kept in their browser).
+const AI_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
+app.get("/api/ai/status", async () => ({ serverKey: !!process.env.GROQ_API_KEY, models: AI_MODELS }));
+app.post("/api/ai/chat", async (req, reply) => {
+  const key = String(req.headers["x-groq-key"] || process.env.GROQ_API_KEY || "").trim();
+  if (!key) { reply.code(401); return { error: "no_key" }; }
+  const body = req.body || {};
+  const model = AI_MODELS.includes(body.model) ? body.model : AI_MODELS[1];
+  const messages = (Array.isArray(body.messages) ? body.messages : [])
+    .filter((m) => m && ["system", "user", "assistant"].includes(m.role) && typeof m.content === "string")
+    .slice(-40).map((m) => ({ role: m.role, content: m.content.slice(0, 8000) }));
+  if (!messages.length) { reply.code(400); return { error: "no messages" }; }
   try {
-    const up = await withTimeout(fetch(u, { headers: { "user-agent": UA } }), 12000);
-    if (!up.ok) { reply.code(up.status); return ""; }
-    reply.header("content-type", up.headers.get("content-type") || "image/png").header("cache-control", "public, max-age=86400");
+    const up = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify({ model, messages, stream: true, temperature: 0.7, max_tokens: 4096 }),
+    });
+    if (!up.ok) { const t = await up.text(); reply.code(up.status); return { error: t.slice(0, 400) }; }
+    reply.header("content-type", "text/event-stream").header("cache-control", "no-cache");
     return reply.send(Readable.fromWeb(up.body));
-  } catch { reply.code(502); return ""; }
-});
-// jsDelivr serves .html as plain text, so serve it ourselves with the right content type.
-app.get("/play/:id", async (req, reply) => {
-  const c = await loadGames();
-  const g = c.map.get(req.params.id);
-  if (!g || !okHost(g.url)) { reply.code(404).type("text/plain"); return "game not found"; }
-  try {
-    const html = await cached("play:" + g.id, async () => {
-      const r = await withTimeout(fetch(g.url, { headers: { "user-agent": UA } }), 15000);
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.text();
-    }, 30 * 60 * 1000);
-    const dir = g.url.slice(0, g.url.lastIndexOf("/") + 1);
-    const base = `<base href="${dir}">`;
-    reply.type("text/html; charset=utf-8");
-    return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + base) : base + html;
-  } catch (e) { reply.code(502).type("text/plain"); return "couldn't load that game: " + (e?.message || e); }
+  } catch (e) { reply.code(502); return { error: String(e?.message || e) }; }
 });
 
 /* ================= Static site ================= */
