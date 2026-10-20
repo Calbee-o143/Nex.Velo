@@ -1,7 +1,7 @@
-/* Music: search YouTube Music + SoundCloud, play through the Nex.Velo server, playlists, recently played. */
+/* Music: search YouTube Music + SoundCloud, play through the Nex.Velo server, lyrics, playlists, recently played. */
 (() => {
   "use strict";
-  const { settings, esc, toast, musicModal, LS } = window.NV;
+  const { settings, esc, toast, LS } = window.NV;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const load = (k, d) => { try { return JSON.parse(LS.get(k, "")) ?? d; } catch { return d; } };
@@ -16,7 +16,7 @@
 
   let playlists = load("nexvelo.playlists", []);   // [{id, name, tracks: []}]
   let recent = load("nexvelo.recent", []);         // [track]
-  let results = [], lastStatus = null, openPl = null;
+  let results = [], lastStatus = null, openPl = null, musicTab = false;
 
   /* ---------- saved player state ---------- */
   const saved = load("nexvelo.music", {});          // {collapsed, cur, queue, qi, pos}
@@ -40,7 +40,7 @@
     if (resumeAt > 1 && resumeAt < dur) audio.currentTime = resumeAt;
     resumeAt = 0;
   });
-  audio.addEventListener("timeupdate", () => { pos = audio.currentTime || 0; if (isFinite(audio.duration)) dur = audio.duration; paintProgress(); persist(); });
+  audio.addEventListener("timeupdate", () => { pos = audio.currentTime || 0; if (isFinite(audio.duration)) dur = audio.duration; paintProgress(); syncLyrics(); persist(); posState(); });
   audio.addEventListener("error", () => onFail());
 
   let failedOnce = new Set();
@@ -56,7 +56,7 @@
         const d = await r.json();
         if (d.track) {
           const alt = { ...d.track, thumb: d.track.thumb || cur.thumb };
-          queue[qi] = alt; cur = alt; paintMini(); toast("youtube blocked that one, playing the soundcloud version");
+          queue[qi] = alt; cur = alt; paintMini(); loadLyrics(alt); toast("youtube blocked that one, playing the soundcloud version");
           audio.src = srcFor(alt); audio.play().catch(() => {}); return;
         }
       } catch {}
@@ -70,29 +70,48 @@
     queue = list; qi = i; cur = t; pos = 0; dur = t.dur || 0; resumeAt = 0;
     audio.src = srcFor(t);
     audio.play().catch(() => onFail());
-    addRecent(t); paintMini(); markNow(); persist(true);
-    if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, artwork: t.thumb ? [{ src: t.thumb }] : [] });
+    addRecent(t); paintMini(); markNow(); persist(true); loadLyrics(t);
+    if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, album: srcName(t.source), artwork: t.thumb ? [{ src: t.thumb, sizes: "300x300" }, { src: t.thumb, sizes: "512x512" }] : [] });
   }
-  const setPlaying = (v) => { playing = v; $("#m-play").innerHTML = v ? ICON.pause : ICON.play; };
+  const setPlaying = (v) => {
+    playing = v; const i = v ? ICON.pause : ICON.play;
+    $("#m-play").innerHTML = i; $("#np-play").innerHTML = i;
+    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = v ? "playing" : "paused";
+    paintPip();
+  };
   function toggle() {
     if (!cur) return;
     if (!audio.src) { audio.src = srcFor(cur); resumeAt = pos; }   // restored from last visit
+    if (lyr.key !== key(cur)) loadLyrics(cur);
     audio.paused ? audio.play().catch(() => onFail()) : audio.pause();
   }
   function next() { if (qi < queue.length - 1) playAt(queue, qi + 1); else { setPlaying(false); } }
   function prev() { if (pos > 4) seek(0); else if (qi > 0) playAt(queue, qi - 1); else seek(0); }
   function seek(frac) { if (!cur || !dur) return; if (!audio.src) { audio.src = srcFor(cur); } pos = frac * dur; audio.currentTime = pos; paintProgress(); }
   if ("mediaSession" in navigator) {
-    navigator.mediaSession.setActionHandler("play", toggle); navigator.mediaSession.setActionHandler("pause", toggle);
-    navigator.mediaSession.setActionHandler("nexttrack", next); navigator.mediaSession.setActionHandler("previoustrack", prev);
+    const ms = navigator.mediaSession, set = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };
+    set("play", () => { if (audio.paused) toggle(); }); set("pause", () => { if (!audio.paused) toggle(); });
+    set("nexttrack", next); set("previoustrack", prev);
+    set("seekto", (d) => { if (d.seekTime != null) { audio.currentTime = d.seekTime; } });
+    set("seekbackward", (d) => { audio.currentTime = Math.max(0, audio.currentTime - (d.seekOffset || 10)); });
+    set("seekforward", (d) => { audio.currentTime = Math.min(dur || 1e9, audio.currentTime + (d.seekOffset || 10)); });
+  }
+  let lastPos = 0;
+  function posState() {
+    if (!("mediaSession" in navigator) || !dur || !isFinite(dur) || Date.now() - lastPos < 1000) return;
+    lastPos = Date.now();
+    try { navigator.mediaSession.setPositionState({ duration: dur, playbackRate: 1, position: Math.min(pos, dur) }); } catch {}
   }
 
   /* ---------- mini player (can be folded away with the arrow) ---------- */
   function paintMini() {
-    const show = !!cur && settings.music;
+    const show = !!cur && settings.music && !musicTab;
     $("#mini").hidden = !show || collapsed;
     $("#m-open").hidden = !show || !collapsed;
     if (!cur) return;
+    $("#np-cov").src = cur.thumb || ""; $("#np-cov").style.visibility = cur.thumb ? "visible" : "hidden";
+    $("#np-t").textContent = cur.title; $("#np-a").textContent = `${cur.artist} · ${srcName(cur.source)}`;
+    paintPip();
     const c = $("#mini-cov"); c.src = cur.thumb || ""; c.style.visibility = cur.thumb ? "visible" : "hidden";
     $("#mini-t").textContent = cur.title; $("#mini-a").textContent = `${cur.artist} · ${srcName(cur.source)}`;
     paintProgress();
@@ -105,7 +124,73 @@
   $("#m-prev").addEventListener("click", prev);
   $("#mini-info").addEventListener("click", () => openMusic());
   $("#prog").addEventListener("pointerdown", (e) => { const r = e.currentTarget.getBoundingClientRect(); seek((e.clientX - r.left) / r.width); });
-  $("#m-play").innerHTML = ICON.play;
+  $("#m-play").innerHTML = ICON.play; $("#np-play").innerHTML = ICON.play;
+  $("#np-play").addEventListener("click", toggle); $("#np-next").addEventListener("click", next); $("#np-prev").addEventListener("click", prev);
+  $("#np-pop").addEventListener("click", () => popOut()); $("#m-pop").addEventListener("click", () => popOut());
+
+  /* ---------- lyrics (LRCLIB via the server) ---------- */
+  let lyr = { key: "", synced: [], idx: -1 };
+  const lyrBox = () => $("#lyr");
+  const lyrMsg = (m) => { lyrBox().innerHTML = `<div class="msg">${esc(m)}</div>`; };
+  async function loadLyrics(t) {
+    const k = key(t); lyr = { key: k, synced: [], idx: -1 };
+    lyrMsg("looking for lyrics…");
+    try {
+      const r = await fetch(`/api/lyrics?title=${encodeURIComponent(t.title)}&artist=${encodeURIComponent(t.artist)}&dur=${Math.round(t.dur || 0)}`);
+      const d = await r.json(); if (lyr.key !== k) return;
+      if (!d.found) return lyrMsg("no lyrics found for this song.");
+      if (d.instrumental) return lyrMsg("instrumental ♪");
+      if (d.synced?.length) {
+        lyr.synced = d.synced;
+        lyrBox().innerHTML = d.synced.map((l, i) => `<p data-i="${i}">${esc(l.text) || "♪"}</p>`).join("");
+        syncLyrics(true);
+      } else if (d.plain) lyrBox().innerHTML = `<p class="plain">${esc(d.plain)}</p>`;
+      else lyrMsg("no lyrics found for this song.");
+    } catch { if (lyr.key === k) lyrMsg("couldn't load lyrics."); }
+  }
+  function syncLyrics(force) {
+    const L = lyr.synced; if (!L.length) return;
+    let lo = 0, hi = L.length - 1, idx = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (L[m].t <= pos + 0.2) { idx = m; lo = m + 1; } else hi = m - 1; }
+    if (idx === lyr.idx && !force) return;
+    const ps = lyrBox().children;
+    if (ps[lyr.idx]) ps[lyr.idx].classList.remove("on");
+    lyr.idx = idx;
+    const el = ps[idx]; if (!el) return;
+    el.classList.add("on");
+    if (musicTab) { const box = lyrBox(); box.scrollTo({ top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2, behavior: "smooth" }); }
+  }
+  lyrBox().addEventListener("click", (e) => {
+    const p = e.target.closest("p[data-i]"); if (!p || !cur) return;
+    if (!audio.src) { audio.src = srcFor(cur); }
+    audio.currentTime = lyr.synced[+p.dataset.i].t; if (audio.paused) audio.play().catch(() => {});
+  });
+
+  /* ---------- pop-out controller (small floating window, no lyrics) ---------- */
+  let pip = null;
+  function paintPip() {
+    if (!pip || !cur) return;
+    const d = pip.document, $$ = (i) => d.getElementById(i);
+    $$("c").src = cur.thumb || ""; $$("t").textContent = cur.title; $$("a").textContent = `${cur.artist} · ${srcName(cur.source)}`;
+    $$("pl").textContent = playing ? "⏸" : "▶"; $$("f").style.width = dur ? Math.min(100, (pos / dur) * 100) + "%" : "0";
+  }
+  setInterval(() => pip && paintPip(), 400);
+  async function popOut() {
+    if (pip) { pip.close(); pip = null; return; }
+    if (!cur) return toast("play a song first");
+    if (!("documentPictureInPicture" in window)) return toast("this browser can't pop out the controller. use the media controls in its toolbar instead.");
+    try {
+      pip = await documentPictureInPicture.requestWindow({ width: 360, height: 150 });
+      const d = pip.document;
+      d.body.style.cssText = "margin:0;background:#000;color:#fff;font-family:system-ui,sans-serif;display:flex;align-items:center;gap:12px;padding:12px;overflow:hidden";
+      d.body.innerHTML = '<img id="c" style="width:76px;height:76px;border-radius:12px;object-fit:cover;background:#111;flex:none"><div style="flex:1;min-width:0"><div id="t" style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div><div id="a" style="font-size:12px;opacity:.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div><div style="display:flex;gap:6px;margin-top:8px"><button id="p">⏮</button><button id="pl">▶</button><button id="n">⏭</button></div><div id="bar" style="height:6px;background:#333;border-radius:3px;margin-top:10px;cursor:pointer"><i id="f" style="display:block;height:100%;width:0;background:#fff;border-radius:3px"></i></div></div>';
+      d.querySelectorAll("button").forEach((b) => { b.style.cssText = "background:#111;color:#fff;border:1px solid #333;border-radius:10px;width:40px;height:32px;font-size:14px;cursor:pointer"; });
+      d.getElementById("p").onclick = prev; d.getElementById("pl").onclick = toggle; d.getElementById("n").onclick = next;
+      d.getElementById("bar").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); seek((e.clientX - r.left) / r.width); };
+      pip.addEventListener("pagehide", () => { pip = null; });
+      paintPip();
+    } catch (e) { pip = null; toast("couldn't open the pop-out controller"); }
+  }
 
   /* ---------- data ---------- */
   function addRecent(t) {
@@ -182,8 +267,8 @@
   /* ---------- panel events ---------- */
   function openMusic(t) {
     if (!settings.music) return;
+    window.NV.openPage("music");
     if (t) showTab(t);
-    musicModal.open();
   }
   function showTab(t) {
     $$(".mtabs button").forEach((b) => b.classList.toggle("on", b.dataset.mt === t));
@@ -211,7 +296,7 @@
   });
 
   document.addEventListener("click", (e) => {
-    if (!$("#music").contains(e.target)) return;
+    if (!$("#page-music").contains(e.target)) return;
     const addBtn = e.target.closest('[data-act="add"]');
     if (addBtn) { e.stopPropagation(); const el = addBtn.closest("[data-i]"); const t = tab() === "recent" ? recent[+el.dataset.i] : results[+el.dataset.i]; return showPop(addBtn, t); }
     const rm = e.target.closest('[data-act="rm"]');
@@ -239,7 +324,7 @@
   /* ---------- extension toggle + status chips ---------- */
   function applyMusicToggle() {
     $("#open-music").hidden = !settings.music;
-    if (!settings.music) { musicModal.close(); if (!audio.paused) audio.pause(); }
+    if (!settings.music && !audio.paused) audio.pause();
     paintMini();
   }
   async function refreshMusicChips() {
@@ -252,6 +337,11 @@
       box.innerHTML = `<span class="chip ${s.youtube ? "ok" : ""}">youtube music: ${s.youtube ? "connected" : "unavailable"}</span><span class="chip ${s.soundcloud ? "ok" : ""}">soundcloud: ${s.soundcloud ? "connected" : "unavailable"}</span>`;
     } catch { box.innerHTML = '<span class="chip">music server not reachable</span>'; }
   }
+  window.NV.onTab = (t) => {
+    musicTab = t.kind === "music"; paintMini();
+    if (musicTab && cur && lyr.key !== key(cur)) loadLyrics(cur);
+    if (musicTab) syncLyrics(true);
+  };
   window.NV.applyMusicToggle = applyMusicToggle;
   window.NV.refreshMusicChips = refreshMusicChips;
   window.addEventListener("beforeunload", () => persist(true));
