@@ -15,7 +15,7 @@
   const settings = {
     wisp: defaultWisp, engine: "https://duckduckgo.com/?q=%s", adblock: true,
     theme: "black", wall: "none", wallUrl: "", blur: true, blurAmt: 14,
-    clock: true, h24: true, music: true, name: "",
+    clock: true, h24: true, music: true, games: true, name: "",
   };
   try { Object.assign(settings, JSON.parse(LS.get("nexvelo.settings", "{}"))); } catch {}
   if (LS.get("nexvelo.settings") == null) { // carry over values saved by the first version
@@ -83,8 +83,7 @@
     $("[data-close]", el)?.addEventListener("click", () => api.close());
     return api;
   }
-  const settingsModal = makeModal($("#settings"));
-  const musicModal = makeModal($("#music"));
+    const musicModal = makeModal($("#music"));
   scrim.addEventListener("pointerdown", () => currentModal && currentModal.close());
   addEventListener("keydown", (e) => { if (e.key === "Escape" && currentModal) currentModal.close(); });
 
@@ -121,6 +120,7 @@
     const g = (t) => parts.find((p) => p.type === t)?.value || "";
     const date = `${g("weekday")} ${g("day")} ${g("month")}`.toLowerCase();
     const hello = greet(h) + (settings.name ? `, ${settings.name.toLowerCase()}` : "");
+    $("#bar-clock").textContent = `${hh}:${String(d.getMinutes()).padStart(2, "0")}`;
     for (const el of $$(".clock")) {
       el.hidden = !settings.clock;
       $(".h", el).textContent = hh;
@@ -154,18 +154,91 @@
     return settings.engine.replace("%s", encodeURIComponent(v));
   }
 
-  /* ================= Tabs ================= */
-  const tabs = [];
-  let active = null, uid = 0;
-  const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  /* ================= Loader (slanted bars + percentage + rotating quote) ================= */
+  const QUOTES = [
+    "Slow is smooth, smooth is fast.", "Patience.", "Good things take a moment.", "Almost there.",
+    "The best way out is always through.", "Small steps add up to big journeys.", "Breathe in, breathe out.",
+    "Every expert was once a beginner.", "Stay curious.", "Quiet minds find clear answers.",
+    "Nothing worth having arrives instantly.", "Keep going, you are closer than you think.",
+    "A little progress each day adds up to big results.", "Rest your eyes for a second.",
+    "You miss every shot you never take.", "Make it simple, then make it better.",
+    "The journey is the fun part.", "Loading greatness.", "Fortune favours the bold.",
+    "Be kind to your future self.", "Dream big, start small, begin now.", "Calm seas never made a skilled sailor.",
+    "Think different, load faster.", "Take a sip of water while you wait.", "Today is a good day to learn something new.",
+    "Courage is just fear that has said its prayers.", "Wherever you go, go with all your heart.",
+    "Light travels faster than sound, so some people look bright until they speak.",
+    "If you can dream it, you can build it.", "Hold tight, the page is on its way.",
+  ];
+  const BARS = 24, words = (q) => q.trim().split(/\s+/).length;
+  let deck = [];
+  const nextQuoteText = () => { if (!deck.length) deck = [...QUOTES].sort(() => Math.random() - .5); return deck.pop(); };
 
-  function newTab(url) {
-    const t = { id: ++uid, title: "New tab", url: "", frame: null };
+  function ensureLoader(t) {
+    if (t.loader) return t.loader;
+    const el = document.createElement("div");
+    el.className = "loader out"; el.hidden = true;
+    el.innerHTML = `<p class="lq"></p><div class="lrow"><div class="lbars">${"<i></i>".repeat(BARS)}</div><span class="lpct">0%</span></div>`;
+    t.view.appendChild(el);
+    return (t.loader = { el, q: $(".lq", el), bars: $$("i", el), pct: $(".lpct", el), p: 0, target: 0, creep: false, raf: 0, timer: 0, on: false });
+  }
+  function showQuote(L) {
+    if (!L.on) return;
+    const text = nextQuoteText();
+    L.q.classList.add("fade");
+    setTimeout(() => { L.q.textContent = text; L.q.classList.remove("fade"); }, L.q.textContent ? 300 : 0);
+    L.timer = setTimeout(() => showQuote(L), words(text) * 2000);   // 1 word = 2 seconds
+  }
+  function loaderTick(L) {
+    if (!L.on) return;
+    if (L.creep && L.target < 92) L.target += .03;
+    L.p += (L.target - L.p) * .07 + .02;
+    if (L.p > L.target) L.p = L.target;
+    const lit = Math.floor((L.p / 100) * BARS + (L.p >= 99.5 ? 1 : 0));
+    L.bars.forEach((b, i) => b.classList.toggle("on", i < lit));
+    L.pct.textContent = Math.floor(L.p) + "%";
+    if (L.target >= 100 && L.p >= 99.4) { setTimeout(() => loaderStop(L), 250); return; }
+    L.raf = requestAnimationFrame(() => loaderTick(L));
+  }
+  function loaderStart(t) {
+    const L = ensureLoader(t);
+    cancelAnimationFrame(L.raf); clearTimeout(L.timer);
+    Object.assign(L, { on: true, p: 0, target: 15, creep: false });
+    L.bars.forEach((b) => b.classList.remove("on")); L.q.textContent = "";
+    L.el.hidden = false; requestAnimationFrame(() => L.el.classList.remove("out"));
+    showQuote(L); loaderTick(L);
+    clearTimeout(L.guard); L.guard = setTimeout(() => loaderStop(L), 60000);   // never get stuck
+  }
+  function loaderStop(L) {
+    if (!L || !L.on) return;
+    L.on = false; cancelAnimationFrame(L.raf); clearTimeout(L.timer); clearTimeout(L.guard);
+    L.el.classList.add("out"); setTimeout(() => { if (!L.on) L.el.hidden = true; }, 320);
+  }
+
+  /* ================= Tabs ================= */
+  // kinds: "web" (home page or a proxied site), "settings", "games"
+  const tabs = [];
+  let active = null, uid = 0, restoring = false;
+  const PAGES = { settings: $("#page-settings"), games: $("#page-games") };
+  const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  const isHome = (t) => t.kind === "web" && !t.frame;
+
+  function saveTabs() {
+    if (restoring) return;
+    LS.set("nexvelo.tabs", JSON.stringify({ a: tabs.indexOf(active), t: tabs.map((t) => ({ k: t.kind, u: t.frame ? t.url : t.pendingUrl || "" })) }));
+  }
+
+  function newTab(opts = {}) {
+    const kind = opts.kind || "web";
+    const t = { id: ++uid, kind, title: kind === "web" ? "New tab" : kind, url: "", frame: null, pendingUrl: null, loader: null };
     t.view = document.createElement("div");
     t.view.className = "view";
-    t.view.innerHTML = `<div class="home"><div class="clock"><div class="time"><span class="h"></span><i>:</i><span class="m"></span></div><div class="g"></div></div><form class="omni"><input type="text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Search or enter address" aria-label="Search or enter address"></form></div>`;
-    t.input = $("input", t.view);
-    $("form", t.view).addEventListener("submit", (e) => { e.preventDefault(); go(t, t.input.value); });
+    if (kind === "web") {
+      t.view.innerHTML = `<div class="home"><div class="clock"><div class="time"><span class="h"></span><i>:</i><span class="m"></span></div><div class="g"></div></div><form class="omni"><input type="text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Search or enter address" aria-label="Search or enter address"></form></div>`;
+      t.input = $("input", t.view);
+      $("form", t.view).addEventListener("submit", (e) => { e.preventDefault(); go(t, t.input.value); });
+    } else {
+      t.view.classList.add("has-page"); t.view.appendChild(PAGES[kind]);
+    }
     t.chip = document.createElement("div");
     t.chip.className = "tab"; t.chip.setAttribute("role", "tab");
     t.chip.innerHTML = `<span class="t"></span><button class="x" aria-label="Close tab">${X_SVG}</button>`;
@@ -174,36 +247,58 @@
     tabs.push(t);
     $("#tabs").appendChild(t.chip);
     $("#views").appendChild(t.view);
-    select(t); paintChip(t); tickClock();
-    if (url) go(t, url); else t.input.focus({ preventScroll: true });
+    if (opts.url && opts.lazy) { t.pendingUrl = opts.url; t.title = hostOf(opts.url); }
+    paintChip(t); select(t); tickClock();
+    if (kind === "settings") loadSettingsUI();
+    if (kind === "games" && NV.onGamesOpen) NV.onGamesOpen();
+    if (opts.url && !opts.lazy) go(t, opts.url);
+    else if (kind === "web" && !opts.lazy) t.input.focus({ preventScroll: true });
     return t;
   }
   const paintChip = (t) => { $(".t", t.chip).textContent = t.title; t.chip.title = t.title; };
+
   function select(t) {
     active = t;
     for (const x of tabs) { const on = x === t; x.view.classList.toggle("active", on); x.chip.setAttribute("aria-selected", on); }
     t.chip.scrollIntoView({ inline: "nearest", block: "nearest" });
-    syncChrome();
+    if (t.pendingUrl && !restoring) { const u = t.pendingUrl; t.pendingUrl = null; go(t, u); }
+    syncChrome(); saveTabs();
   }
   function closeTab(t) {
     const i = tabs.indexOf(t);
+    if (t.loader) loaderStop(t.loader);
+    if (PAGES[t.kind]) $("#pages").appendChild(PAGES[t.kind]);   // park the page node again
     tabs.splice(i, 1); t.chip.remove(); t.view.remove();
     if (!tabs.length) return newTab();
-    if (active === t) select(tabs[Math.min(i, tabs.length - 1)]);
+    if (active === t) select(tabs[Math.min(i, tabs.length - 1)]); else saveTabs();
   }
+  function openPage(kind) {
+    const ex = tabs.find((t) => t.kind === kind);
+    if (ex) { select(ex); if (kind === "settings") loadSettingsUI(); } else newTab({ kind });
+  }
+
   async function go(t, raw) {
+    if (t.kind !== "web") return;
     const url = resolve(raw);
     if (!url) return;
-    try { await ready; } catch (e) { toast(e.message); return; }
+    loaderStart(t);
+    try { await ready; } catch (e) { loaderStop(t.loader); toast(e.message); return; }
+    t.loader.target = Math.max(t.loader.target, 30);
     if (!t.frame) {
       t.frame = scramjet.createFrame();
-      t.view.appendChild(t.frame.frame);
+      t.view.insertBefore(t.frame.frame, t.loader.el);
       t.view.classList.add("has-frame");
-      t.frame.frame.addEventListener("load", () => syncTab(t));
+      t.frame.frame.addEventListener("load", () => {
+        let blank = false; try { blank = t.frame.frame.contentWindow.location.href === "about:blank"; } catch {}
+        if (t.loading && !blank) { t.loading = false; t.loader.target = 100; }
+        syncTab(t);
+      });
     }
     t.url = url; t.title = hostOf(url); paintChip(t);
-    try { t.frame.go(url); } catch (e) { toast("couldn't open that page"); console.error(e); }
+    t.loading = true; t.loader.creep = true;
+    try { t.frame.go(url); } catch (e) { toast("couldn't open that page"); console.error(e); loaderStop(t.loader); }
     if (t === active) syncChrome();
+    saveTabs();
   }
   const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
   function liveUrl(t) {
@@ -214,27 +309,31 @@
   }
   function syncTab(t) {
     if (!t.frame) return;
+    const before = t.url;
     const u = liveUrl(t); if (u) t.url = u;
     let title = ""; try { title = t.frame.frame.contentDocument.title; } catch {}
     t.title = title || hostOf(t.url) || "New tab"; paintChip(t);
     if (t === active) syncChrome();
+    if (before !== t.url) saveTabs();
   }
   function syncChrome() {
-    const browsing = !!(active && active.frame);
+    const browsing = !!(active && active.kind === "web" && active.frame);
     document.body.classList.toggle("browsing", browsing);
+    $("#bar-clock").hidden = !!(active && isHome(active));   // small clock appears once you leave the big-clock home page
     if (browsing && document.activeElement !== $("#address")) $("#address").value = active.url;
-    document.title = browsing ? `${active.title} – Nex.Velo` : "Nex.Velo";
+    document.title = browsing ? `${active.title} – Nex.Velo` : active && PAGES[active.kind] ? `${active.kind} – Nex.Velo` : "Nex.Velo";
   }
   setInterval(() => active && active.frame && syncTab(active), 900);
 
   const hist = (fn) => { try { fn(active.frame.frame.contentWindow.history); } catch {} };
   $("#back").addEventListener("click", () => hist((h) => h.back()));
   $("#forward").addEventListener("click", () => hist((h) => h.forward()));
-  $("#reload").addEventListener("click", () => { try { active.frame.frame.contentWindow.location.reload(); } catch { go(active, active.url); } });
+  $("#reload").addEventListener("click", () => { try { loaderStart(active); active.loading = true; active.loader.creep = true; active.frame.frame.contentWindow.location.reload(); } catch { go(active, active.url); } });
   $("#home").addEventListener("click", () => {
     const t = active;
-    t.frame.frame.remove(); t.frame = null; t.url = ""; t.title = "New tab";
-    t.view.classList.remove("has-frame"); t.input.value = ""; paintChip(t); syncChrome();
+    if (t.loader) loaderStop(t.loader);
+    t.frame.frame.remove(); t.frame = null; t.url = ""; t.title = "New tab"; t.loading = false;
+    t.view.classList.remove("has-frame"); t.input.value = ""; paintChip(t); syncChrome(); saveTabs();
   });
   $("#address").addEventListener("keydown", (e) => { if (e.key === "Enter") { go(active, e.target.value); e.target.blur(); } });
   $("#address").addEventListener("focus", (e) => e.target.select());
@@ -283,14 +382,13 @@
     $("#wisp-url").value = settings.wisp; $("#engine").value = settings.engine;
     $("#adblock").checked = settings.adblock; $("#clock").checked = settings.clock; $("#h24").checked = settings.h24;
     $("#blur").checked = settings.blur; $("#blur-amt").value = settings.blurAmt; $("#wall-url").value = settings.wallUrl;
-    $("#music-on").checked = settings.music; $("#name").value = settings.name;
+    $("#music-on").checked = settings.music; $("#games-on").checked = settings.games; $("#name").value = settings.name;
     buildAppearance(); say("");
     NV.refreshMusicChips && NV.refreshMusicChips();
   }
   function openSettings(sec) {
-    loadSettingsUI();
+    openPage("settings");
     if (sec) showSec(sec);
-    settingsModal.open();
   }
   function showSec(id) {
     $$(".nb").forEach((b) => b.classList.toggle("on", b.dataset.sec === id));
@@ -320,10 +418,11 @@
   $("#clock").addEventListener("change", (e) => { settings.clock = e.target.checked; save(); tickClock(); });
   $("#h24").addEventListener("change", (e) => { settings.h24 = e.target.checked; save(); tickClock(); });
   $("#music-on").addEventListener("change", (e) => { settings.music = e.target.checked; save(); NV.applyMusicToggle && NV.applyMusicToggle(); });
+  $("#games-on").addEventListener("change", (e) => { settings.games = e.target.checked; save(); $("#open-games").hidden = !settings.games; });
   $("#name").addEventListener("input", (e) => { settings.name = e.target.value.trim(); save(); tickClock(); });
 
   /* account: backup / restore / reset */
-  const DATA_KEYS = ["nexvelo.settings", "nexvelo.playlists", "nexvelo.recent"];
+  const DATA_KEYS = ["nexvelo.settings", "nexvelo.playlists", "nexvelo.recent", "nexvelo.music", "nexvelo.tabs", "nexvelo.games"];
   $("#exp").addEventListener("click", () => {
     const out = {}; DATA_KEYS.forEach((k) => { out[k] = LS.get(k, null); });
     const a = document.createElement("a");
@@ -348,6 +447,7 @@
   const STEPS = [
     ["#tabs", "these are your tabs. every tab is its own proxied page."],
     ["#new-tab", "open a new tab here."],
+    ["#open-games", "a library of browser games. pick one and it opens in its own tab."],
     ["#open-music", "search youtube music and soundcloud at once. playlists and recents live here too."],
     ["#open-settings", "themes, wallpapers, your wisp server and more."],
     [".view.active .omni", "type a search or a web address and press enter."],
@@ -377,7 +477,15 @@
   $("#tour-btn").addEventListener("click", startTour);
 
   /* ================= Boot ================= */
-  window.NV = { settings, save, esc, toast, spring, makeModal, musicModal, openSettings, LS };
+  const NV = window.NV = { settings, save, esc, toast, spring, makeModal, musicModal, openSettings, openPage, openUrl: (u) => newTab({ url: u }), LS };
   applyTheme(); applyWall();
-  newTab();
+  $("#open-games").hidden = !settings.games;
+  $("#open-games").addEventListener("click", () => openPage("games"));
+  restoring = true;
+  let saved = null; try { saved = JSON.parse(LS.get("nexvelo.tabs", "null")); } catch {}
+  if (saved && saved.t && saved.t.length) {
+    saved.t.forEach((x) => { if (x.k === "web" || PAGES[x.k]) if (!(PAGES[x.k] && tabs.some((t) => t.kind === x.k))) newTab({ kind: x.k, url: x.u, lazy: true }); });
+  }
+  restoring = false;
+  if (!tabs.length) newTab(); else select(tabs[Math.min(Math.max(saved.a, 0), tabs.length - 1)] || tabs[0]);
 })();
