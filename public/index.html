@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0a0a0b;--fg:#f2f2f2;--dim:rgba(242,242,242,.55);--panel:#1d2125;--card:#272c31;--accent:#e9e9e9;--accent-fg:#101010;--hair:rgba(255,255,255,.1);--line:rgba(255,255,255,.85);--glass:rgba(10,10,11,.66);--blur:0px;--field-h:56px;--radius:calc(var(--field-h)*.25);color-scheme:dark}
+:root{--bg:#000;--fg:#f2f2f2;--dim:rgba(242,242,242,.55);--panel:#000;--card:#0e0e0e;--accent:#e9e9e9;--accent-fg:#101010;--hair:rgba(255,255,255,.2);--line:rgba(255,255,255,.85);--glass:rgba(0,0,0,.72);--blur:0px;--field-h:56px;--radius:calc(var(--field-h)*.25);color-scheme:dark}
 [data-theme=white]{--bg:#f6f6f4;--fg:#1b1b1d;--dim:rgba(27,27,29,.55);--panel:#fff;--card:#efefec;--accent:#1b1b1d;--accent-fg:#fff;--hair:rgba(0,0,0,.1);--line:rgba(27,27,29,.8);--glass:rgba(246,246,244,.72);color-scheme:light}
 [data-theme=sage]{--bg:#e3ebdc;--fg:#2a3a2b;--dim:rgba(42,58,43,.58);--panel:#eef3e9;--card:#d8e3d0;--accent:#8fb39a;--accent-fg:#16261a;--hair:rgba(42,58,43,.14);--line:rgba(42,58,43,.8);--glass:rgba(227,235,220,.72);color-scheme:light}
 [data-theme=lavender]{--bg:#e8e2f4;--fg:#35304a;--dim:rgba(53,48,74,.58);--panel:#f1edf9;--card:#ddd5ee;--accent:#a99bd6;--accent-fg:#221d38;--hair:rgba(53,48,74,.14);--line:rgba(53,48,74,.8);--glass:rgba(232,226,244,.72);color-scheme:light}
@@ -60,15 +60,49 @@ body.has-wall .clock{text-shadow:0 2px 30px rgba(0,0,0,.35)}
 .clock .g{margin-top:1rem;font-size:.9375rem;letter-spacing:.01em;opacity:.8}
 .clock .g b{font-weight:500}
 .omni{width:min(560px,100%)}
-.omni input{width:100%;height:var(--field-h);padding:0 1.25rem;background:transparent;color:var(--hfg,var(--fg));border:1px solid var(--line);border-radius:var(--radius);font-size:1rem;letter-spacing:-.01em;outline:none;transition:box-shadow 160ms ease-out}
-.omni input::placeholder{color:color-mix(in srgb,var(--hfg,var(--fg)) 55%,transparent)}
-.omni input:focus{box-shadow:0 0 0 4px color-mix(in srgb,var(--hfg,var(--fg)) 14%,transparent)}
-body.has-wall .omni input{border-color:rgba(255,255,255,.9);background:rgba(0,0,0,.2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.omni input{width:100%;height:var(--field-h);padding:0 1.25rem;background:#000;color:#fff;border:1px solid #fff;border-radius:var(--radius);font-size:1rem;letter-spacing:-.01em;outline:none;transition:box-shadow 160ms ease-out}
+.omni input::placeholder{color:rgba(255,255,255,.5)}
+.omni input:focus{box-shadow:0 0 0 4px rgba(255,255,255,.18)}
+
+/* internal pages (settings, games) */
+#pages{display:none}
+.page{position:absolute;inset:0;background:var(--panel);color:var(--fg);overflow:hidden}
+.view.has-page .home{display:none}
+#bar-clock{flex:none;padding:0 .625rem;font-size:.8125rem;font-weight:500;letter-spacing:.02em;color:var(--dim);font-variant-numeric:tabular-nums}
+.snav{border-right:1px solid var(--hair)}
+.gwrap{height:100%;overflow:auto;padding:1.5rem}
+.ghead{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1.25rem}
+.ghead h2{margin:0;font-size:1.5rem;font-weight:500;letter-spacing:-.02em}
+.ghead input{flex:1;min-width:10rem;max-width:26rem;height:2.5rem;padding:0 1rem;background:#000;color:#fff;border:1px solid var(--line);border-radius:.75rem;font-size:.875rem;outline:none}
+.ghead small{color:var(--dim);font-size:.75rem}
+.ggrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr));gap:1rem}
+.gcard{text-align:left;border:1px solid var(--hair);border-radius:.875rem;overflow:hidden;background:var(--card);display:flex;flex-direction:column}
+.gcard:hover{border-color:var(--line)}
+.gcard i{display:block;aspect-ratio:1;background:var(--card) center/cover no-repeat}
+.gcard span{padding:.5rem .625rem .625rem;font-size:.75rem;line-height:1.3;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:2.6rem}
+#gmore{display:block;margin:1.25rem auto 0}
+/* loader */
+.loader{position:absolute;inset:0;z-index:6;background:#000;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.75rem;padding:1.5rem;transition:opacity .3s}
+.loader.out{opacity:0;pointer-events:none}
+.lq{margin:0;max-width:34rem;min-height:3.5rem;text-align:center;font-size:1.0625rem;line-height:1.5;letter-spacing:-.01em;transition:opacity .35s}
+.lq.fade{opacity:0}
+.lrow{display:flex;align-items:center;gap:1.25rem}
+.lbars{display:flex;gap:.3125rem}
+.lbars i{display:block;width:.5rem;height:2.25rem;background:rgba(255,255,255,.14);transform:skewX(-24deg);transition:background .25s,transform .25s}
+.lbars i.on{background:#fff;animation:barin .3s cubic-bezier(.2,.9,.3,1) both}
+@keyframes barin{from{opacity:0;transform:skewX(-24deg) translateY(.75rem) scaleY(.4)}}
+.lpct{min-width:3.5ch;font-size:1.375rem;font-weight:500;font-variant-numeric:tabular-nums}
+/* player collapse */
+#m-toggle{position:absolute;top:-1.5rem;left:50%;transform:translateX(-50%);width:3rem;height:1.5rem;border-radius:.75rem .75rem 0 0;background:var(--glass);border:1px solid var(--hair);border-bottom:0;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
+#m-toggle:active{transform:translateX(-50%) scale(.95)}
+#m-open{position:fixed;z-index:15;left:50%;transform:translateX(-50%);bottom:env(safe-area-inset-bottom,0px);width:3.5rem;height:1.75rem;border-radius:.875rem .875rem 0 0;background:var(--glass);border:1px solid var(--hair);border-bottom:0;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
+#m-open:active{transform:translateX(-50%) scale(.95)}
+#m-toggle svg,#m-open svg{width:1rem;height:1rem;stroke:var(--fg);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 
 /* modals */
 #scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;z-index:20}
 .modal{position:fixed;left:50%;top:50%;width:min(880px,94vw);height:min(600px,86vh);display:none;z-index:21;opacity:var(--o,0);transform:translate(-50%,-50%) scale(var(--s,.96));background:var(--panel);color:var(--fg);border:1px solid var(--hair);border-radius:1.5rem;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.45)}
-.modal .x{position:absolute;top:1rem;right:1rem;width:2rem;height:2rem;border-radius:50%;color:var(--dim);font-size:1.25rem;line-height:1;z-index:2}
+.modal .x,.page .x{position:absolute;top:1rem;right:1rem;width:2rem;height:2rem;border-radius:50%;color:var(--dim);font-size:1.25rem;line-height:1;z-index:2}
 .modal .x:hover{background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg)}
 .sgrid{display:grid;grid-template-columns:15rem 1fr;height:100%}
 .snav{background:var(--card);padding:1.5rem 1rem;display:flex;flex-direction:column;gap:.25rem;overflow:auto}
@@ -180,7 +214,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 
 <header id="tabbar">
   <div id="tabs" role="tablist" aria-label="Tabs"></div>
+  <span id="bar-clock" hidden></span>
   <button class="ib" id="new-tab" aria-label="New tab" title="New tab"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+  <button class="ib" id="open-games" aria-label="Games" title="Games"><svg viewBox="0 0 24 24"><path d="M6 9h12a3 3 0 0 1 3 3.2l-.6 4A2.4 2.4 0 0 1 16 17.3L15 15H9l-1 2.3a2.4 2.4 0 0 1-4.4-1.1l-.6-4A3 3 0 0 1 6 9z"/><path d="M8 11v3M6.5 12.5h3M16 12h.01M18 13.5h.01"/></svg></button>
   <button class="ib" id="open-music" aria-label="Music" title="Music"><svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg></button>
   <button class="ib" id="open-settings" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
 </header>
@@ -197,9 +233,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <main id="views"></main>
 <div id="scrim"></div>
 
-<!-- settings -->
-<section class="modal" id="settings" role="dialog" aria-label="Settings">
-  <button class="x" data-close aria-label="Close">×</button>
+<!-- internal pages (moved into a tab when opened) -->
+<div id="pages">
+<section class="page" id="page-settings">
   <div class="sgrid">
     <nav class="snav">
       <h1>settings</h1>
@@ -234,6 +270,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
         <h2>extensions</h2>
         <label class="switch"><div><b>music</b><small>search youtube music and soundcloud, playlists, recently played</small></div><input type="checkbox" id="music-on"></label>
         <div class="chips" id="music-chips"></div>
+        <label class="switch" style="margin-top:1.5rem"><div><b>games</b><small>a library of browser games that opens in a tab</small></div><input type="checkbox" id="games-on"></label>
       </div>
       <div class="sec" id="sec-account">
         <h2>account</h2>
@@ -253,6 +290,15 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     </div>
   </div>
 </section>
+<section class="page" id="page-games">
+  <div class="gwrap">
+    <div class="ghead"><h2>games</h2><input id="gq" type="text" placeholder="search games" autocomplete="off" spellcheck="false"><small id="gcount"></small></div>
+    <div id="ggrid" class="ggrid"></div>
+    <button class="btn" id="gmore" hidden>load more</button>
+    <div class="msg" id="gmsg"></div>
+  </div>
+</section>
+</div>
 
 <!-- music -->
 <section class="modal" id="music" role="dialog" aria-label="Music">
@@ -270,6 +316,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 </section>
 
 <div id="mini" hidden>
+  <button id="m-toggle" aria-label="Hide player"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
   <img class="cov" id="mini-cov" alt="">
   <div class="tm" id="mini-info"><b id="mini-t"></b><span id="mini-a"></span></div>
   <button class="ib" id="m-prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 5v14M19 5L9 12l10 7z"/></svg></button>
@@ -277,8 +324,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <button class="ib" id="m-next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M18 5v14M5 5l10 7-10 7z"/></svg></button>
   <div id="prog"><i></i></div>
 </div>
+<button id="m-open" aria-label="Show player" hidden><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
 <div id="pop" hidden></div>
-<div id="yt-hold"><div id="yt"></div></div>
 <div id="toast" role="status"></div>
 <div id="tour" hidden><div id="tour-hl"></div><div id="tour-card"><p id="tour-text"></p><div class="row"><button class="btn primary" id="tour-next">next</button><button class="btn" id="tour-skip">skip</button></div></div></div>
 
@@ -287,5 +334,6 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <script src="/wallpapers.js"></script>
 <script src="/app.js"></script>
 <script src="/music.js"></script>
+<script src="/games.js"></script>
 </body>
 </html>
