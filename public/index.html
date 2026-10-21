@@ -355,7 +355,13 @@ input[type=range]{width:100%;accent-color:var(--accent)}
         <label class="fld"><span>search engine</span><select id="engine"><option value="https://duckduckgo.com/?q=%s">DuckDuckGo</option><option value="https://www.google.com/search?q=%s">Google</option><option value="https://www.bing.com/search?q=%s">Bing</option><option value="https://search.brave.com/search?q=%s">Brave Search</option></select></label>
         <h3>escape key</h3>
         <label class="switch"><div><b>escape key</b><small>press it anywhere to jump to a safe page right away</small></div><input type="checkbox" id="panic-on"></label>
-        <div class="row" style="margin-bottom:1.25rem"><button class="btn" id="panic-key" title="Click, then press a key">F9</button><label class="fld" style="flex:1;margin:0;min-width:14rem"><input type="text" id="panic-url" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="https://classroom.google.com"></label></div>
+        <div class="row" style="margin-bottom:.75rem"><button class="btn" id="panic-key" title="Click, then press a key">F9</button>
+          <label class="fld" style="flex:1;margin:0;min-width:14rem"><select id="panic-site">
+            <option value="classroom">Google Classroom</option><option value="docs">Google Docs</option><option value="drive">Google Drive</option><option value="gmail">Gmail</option>
+            <option value="canvas">Canvas</option><option value="schoology">Schoology</option><option value="khan">Khan Academy</option><option value="desmos">Desmos</option>
+            <option value="wikipedia">Wikipedia</option><option value="google">Google</option><option value="custom">my own address…</option></select></label></div>
+        <label class="fld" id="panic-url-fld" hidden><span>address</span><input type="text" id="panic-url" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="https://example.com"></label>
+        <label class="fld" style="margin-bottom:1.25rem"><span>when you press it</span><select id="panic-mode"><option value="replace">replace this tab</option><option value="new">open it in a new tab and blank this one</option></select></label>
         <h3>browsing</h3>
         <label class="switch"><div><b>adblock</b><small>blocks ad and tracker requests</small></div><input type="checkbox" id="adblock"></label>
         <label class="switch"><div><b>show clock</b><small>on the new tab page</small></div><input type="checkbox" id="clock"></label>
