@@ -16,6 +16,7 @@
     wisp: defaultWisp, engine: "https://duckduckgo.com/?q=%s", adblock: true,
     theme: "black", wall: "none", wallUrl: "", blur: true, blurAmt: 14,
     clock: true, h24: true, music: true, games: true, ai: true, name: "",
+    panicOn: true, panicKey: "F9", panicUrl: "https://classroom.google.com",
   };
   try { Object.assign(settings, JSON.parse(LS.get("nexvelo.settings", "{}"))); } catch {}
   if (LS.get("nexvelo.settings") == null) { // carry over values saved by the first version
@@ -110,10 +111,24 @@
     document.body.classList.toggle("has-wall", !!src);
   }
 
+  /* ================= Escape key ================= */
+  function panicHandler(e) {
+    if (!settings.panicOn || e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (k !== settings.panicKey) return;
+    const t = e.target, typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    if (typing && settings.panicKey.length === 1) return;   // single letters would fire while typing
+    e.preventDefault(); e.stopPropagation();
+    location.replace(settings.panicUrl);
+  }
+  addEventListener("keydown", panicHandler, true);
+
   /* ================= URL handling ================= */
+  const ALIAS = /^(?:https?:\/\/)?nex\.?velo(?:\/(games|music|ai|settings|servers))?\/?$/i;
   function resolve(raw) {
     const v = raw.trim();
     if (!v) return null;
+    if (/^nex\.?velo\//i.test(v) && !ALIAS.test(v)) return location.origin + "/" + v.replace(/^nex\.?velo\/?/i, "");
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) return v;
     if (!/\s/.test(v) && (/^localhost(:\d+)?(\/|$)/i.test(v) || /^[^\s/]+\.[a-z]{2,}(:\d+)?(\/|$|\?|#)/i.test(v))) return "https://" + v;
     return settings.engine.replace("%s", encodeURIComponent(v));
@@ -183,7 +198,7 @@
   // kinds: "web" (home page or a proxied site), "settings", "games"
   const tabs = [];
   let active = null, uid = 0, restoring = false;
-  const PAGES = { settings: $("#page-settings"), music: $("#page-music"), ai: $("#page-ai") };
+  const PAGES = { settings: $("#page-settings"), music: $("#page-music"), ai: $("#page-ai"), games: $("#page-games"), servers: $("#page-servers") };
   const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   const isHome = (t) => t.kind === "web" && !t.frame;
 
@@ -216,6 +231,8 @@
     paintChip(t); select(t); tickClock();
     if (kind === "settings") loadSettingsUI();
     if (kind === "ai" && NV.onAiOpen) NV.onAiOpen();
+    if (kind === "games" && NV.onGamesOpen) NV.onGamesOpen();
+    if (kind === "servers" && NV.onServersOpen) NV.onServersOpen();
     if (opts.url && !opts.lazy) go(t, opts.url);
     else if (kind === "web" && !opts.lazy) t.input.focus({ preventScroll: true });
     return t;
@@ -250,6 +267,8 @@
 
   async function go(t, raw) {
     if (t.kind !== "web") return;
+    const al = String(raw).trim().match(ALIAS);
+    if (al) { if (al[1]) openPage(al[1]); return; }
     const url = resolve(raw);
     if (!url) return;
     loaderStart(t);
@@ -260,6 +279,7 @@
       t.view.insertBefore(t.frame.frame, t.loader.el);
       t.view.classList.add("has-frame");
       t.frame.frame.addEventListener("load", () => {
+        try { t.frame.frame.contentWindow.addEventListener("keydown", panicHandler, true); } catch {}
         let blank = false; try { blank = t.frame.frame.contentWindow.location.href === "about:blank"; } catch {}
         if (t.loading && !blank) { t.loading = false; t.loader.target = 100; }
         syncTab(t);
@@ -270,6 +290,13 @@
     try { t.frame.go(url); } catch (e) { toast("couldn't open that page"); console.error(e); loaderStop(t.loader); }
     if (t === active) syncChrome();
     saveTabs();
+  }
+  function displayUrl(u) {
+    try {
+      const x = new URL(u);
+      if (x.origin === location.origin) return "Nex.Velo" + x.pathname.replace(/\.html$/, "").replace(/\/$/, "") + x.search;
+    } catch {}
+    return u;
   }
   const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
   function liveUrl(t) {
@@ -289,9 +316,13 @@
   }
   function syncChrome() {
     const browsing = !!(active && active.kind === "web" && active.frame);
+    const isPage = !!(active && PAGES[active.kind]);
     document.body.classList.toggle("browsing", browsing);
+    document.body.classList.toggle("page-tab", isPage);
+    $("#address").readOnly = isPage;
+    if (isPage && document.activeElement !== $("#address")) $("#address").value = "Nex.Velo/" + active.kind;
     $("#bar-clock").hidden = !!(active && isHome(active));   // small clock appears once you leave the big-clock home page
-    if (browsing && document.activeElement !== $("#address")) $("#address").value = active.url;
+    if (browsing && document.activeElement !== $("#address")) $("#address").value = displayUrl(active.url);
     document.title = browsing ? `${active.title} – Nex.Velo` : active && PAGES[active.kind] ? `${active.kind} – Nex.Velo` : "Nex.Velo";
   }
   setInterval(() => active && active.frame && syncTab(active), 900);
@@ -306,7 +337,7 @@
     t.frame.frame.remove(); t.frame = null; t.url = ""; t.title = "New tab"; t.loading = false;
     t.view.classList.remove("has-frame"); t.input.value = ""; paintChip(t); syncChrome(); saveTabs();
   });
-  $("#address").addEventListener("keydown", (e) => { if (e.key === "Enter") { go(active, e.target.value); e.target.blur(); } });
+  $("#address").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.target.readOnly) { go(active, e.target.value); e.target.blur(); } });
   $("#address").addEventListener("focus", (e) => e.target.select());
   $("#new-tab").addEventListener("click", () => newTab());
 
@@ -378,7 +409,7 @@
     $("#wisp-url").value = settings.wisp; $("#engine").value = settings.engine;
     $("#adblock").checked = settings.adblock; $("#clock").checked = settings.clock; $("#h24").checked = settings.h24;
     $("#blur").checked = settings.blur; $("#blur-amt").value = settings.blurAmt; $("#wall-url").value = settings.wallUrl;
-    $("#music-on").checked = settings.music; $("#games-on").checked = settings.games; $("#ai-on").checked = settings.ai; $("#name").value = settings.name;
+    $("#panic-on").checked = settings.panicOn; $("#panic-key").textContent = settings.panicKey; $("#panic-url").value = settings.panicUrl; $("#music-on").checked = settings.music; $("#games-on").checked = settings.games; $("#ai-on").checked = settings.ai; $("#name").value = settings.name;
     buildAppearance(); say("");
     NV.refreshMusicChips && NV.refreshMusicChips();
   }
@@ -414,12 +445,22 @@
   $("#clock").addEventListener("change", (e) => { settings.clock = e.target.checked; save(); tickClock(); });
   $("#h24").addEventListener("change", (e) => { settings.h24 = e.target.checked; save(); tickClock(); });
   $("#music-on").addEventListener("change", (e) => { settings.music = e.target.checked; save(); NV.applyMusicToggle && NV.applyMusicToggle(); });
+  $("#panic-on").addEventListener("change", (e) => { settings.panicOn = e.target.checked; save(); });
+  $("#panic-url").addEventListener("change", (e) => { let u = e.target.value.trim(); if (u && !/^[a-z][a-z0-9+.-]*:/i.test(u)) u = "https://" + u; settings.panicUrl = u || "https://classroom.google.com"; e.target.value = settings.panicUrl; save(); });
+  let capturing = false;
+  $("#panic-key").addEventListener("click", (e) => { capturing = true; e.target.textContent = "press a key…"; });
+  addEventListener("keydown", (e) => {
+    if (!capturing) return;
+    e.preventDefault(); e.stopPropagation(); capturing = false;
+    if (e.key !== "Escape") { settings.panicKey = e.key.length === 1 ? e.key.toLowerCase() : e.key; save(); }
+    $("#panic-key").textContent = settings.panicKey;
+  }, true);
   $("#ai-on").addEventListener("change", (e) => { settings.ai = e.target.checked; save(); $("#open-ai").hidden = !settings.ai; });
   $("#games-on").addEventListener("change", (e) => { settings.games = e.target.checked; save(); $("#open-games").hidden = !settings.games; });
   $("#name").addEventListener("input", (e) => { settings.name = e.target.value.trim(); save(); tickClock(); });
 
   /* account: backup / restore / reset */
-  const DATA_KEYS = ["nexvelo.settings", "nexvelo.playlists", "nexvelo.recent", "nexvelo.music", "nexvelo.tabs", "nexvelo.ai"];
+  const DATA_KEYS = ["nexvelo.settings", "nexvelo.playlists", "nexvelo.recent", "nexvelo.music", "nexvelo.tabs", "nexvelo.ai", "nexvelo.servers"];
   $("#exp").addEventListener("click", () => {
     const out = {}; DATA_KEYS.forEach((k) => { out[k] = LS.get(k, null); });
     const a = document.createElement("a");
@@ -444,8 +485,9 @@
   const STEPS = [
     ["#tabs", "these are your tabs. every tab is its own proxied page."],
     ["#new-tab", "open a new tab here."],
-    ["#open-ai", "an ai assistant in its own tab."],
+    ["#open-ai", "an ai assistant in its own tab. it can see your screen, hear you and read files."],
     ["#open-games", "a library of browser games. pick one and it opens in its own tab."],
+    ["#open-servers", "pick or add the wisp server that carries your traffic."],
     ["#open-music", "search youtube music and soundcloud at once. playlists and recents live here too."],
     ["#open-settings", "themes, wallpapers, your wisp server and more."],
     [".view.active .omni", "type a search or a web address and press enter."],
@@ -474,15 +516,16 @@
   $("#tour-btn").addEventListener("click", startTour);
 
   /* ================= Boot ================= */
-  const NV = window.NV = { settings, save, esc, toast, spring, openSettings, openPage, openUrl: (u) => newTab({ url: u }), LS };
+  const NV = window.NV = {
+    settings, save, esc, toast, spring, openSettings, openPage, openUrl: (u) => newTab({ url: u }), LS, defaultWisp, testWisp, normalizeWisp,
+    setWisp: async (url) => { settings.wisp = url; save(); $("#wisp-url").value = url; await applyTransport(); },
+  };
   applyTheme(); applyWall();
   $("#open-games").hidden = !settings.games;
   $("#open-ai").hidden = !settings.ai;
   $("#open-ai").addEventListener("click", () => openPage("ai"));
-  $("#open-games").addEventListener("click", () => {
-    const ex = tabs.find((t) => t.kind === "web" && /\/games\.html/.test(t.url || t.pendingUrl || ""));
-    if (ex) select(ex); else newTab({ url: location.origin + "/games.html" });
-  });
+  $("#open-games").addEventListener("click", () => openPage("games"));
+  $("#open-servers").addEventListener("click", () => openPage("servers"));
   $("#logo").addEventListener("click", () => newTab());
   restoring = true;
   let saved = null; try { saved = JSON.parse(LS.get("nexvelo.tabs", "null")); } catch {}
