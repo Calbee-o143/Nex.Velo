@@ -16,7 +16,7 @@
     wisp: defaultWisp, engine: "https://duckduckgo.com/?q=%s", adblock: true,
     theme: "black", wall: "none", wallUrl: "", blur: true, blurAmt: 14,
     clock: true, h24: true, music: true, games: true, ai: true, name: "",
-    panicOn: true, panicKey: "F9", panicUrl: "https://classroom.google.com",
+    panicOn: true, panicKey: "F9", panicSite: "classroom", panicUrl: "", panicMode: "replace",
   };
   try { Object.assign(settings, JSON.parse(LS.get("nexvelo.settings", "{}"))); } catch {}
   if (LS.get("nexvelo.settings") == null) { // carry over values saved by the first version
@@ -25,6 +25,17 @@
     if (e) settings.engine = e;
     if (a != null) settings.adblock = a === "1";
   }
+  const PANIC_SITES = {
+    classroom: "https://classroom.google.com", docs: "https://docs.google.com", drive: "https://drive.google.com", gmail: "https://mail.google.com",
+    canvas: "https://canvas.instructure.com", schoology: "https://app.schoology.com", khan: "https://www.khanacademy.org",
+    desmos: "https://www.desmos.com/calculator", wikipedia: "https://www.wikipedia.org", google: "https://www.google.com",
+  };
+  { // an address saved by the earlier version stays as "my own address"
+    let saved = {}; try { saved = JSON.parse(LS.get("nexvelo.settings", "{}")); } catch {}
+    if (!saved.panicSite && saved.panicUrl && !Object.values(PANIC_SITES).includes(saved.panicUrl)) settings.panicSite = "custom";
+    else if (!saved.panicSite && saved.panicUrl) settings.panicSite = Object.keys(PANIC_SITES).find((k) => PANIC_SITES[k] === saved.panicUrl) || "classroom";
+  }
+  const panicDest = () => (settings.panicSite === "custom" ? settings.panicUrl : PANIC_SITES[settings.panicSite]) || PANIC_SITES.classroom;
   const save = () => LS.set("nexvelo.settings", JSON.stringify(settings));
 
   /* ================= Toast + spring ================= */
@@ -119,7 +130,9 @@
     const t = e.target, typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
     if (typing && settings.panicKey.length === 1) return;   // single letters would fire while typing
     e.preventDefault(); e.stopPropagation();
-    location.replace(settings.panicUrl);
+    const dest = panicDest();
+    if (settings.panicMode === "new") { window.open(dest, "_blank", "noopener"); location.replace("about:blank"); }
+    else location.replace(dest);
   }
   addEventListener("keydown", panicHandler, true);
 
@@ -409,7 +422,7 @@
     $("#wisp-url").value = settings.wisp; $("#engine").value = settings.engine;
     $("#adblock").checked = settings.adblock; $("#clock").checked = settings.clock; $("#h24").checked = settings.h24;
     $("#blur").checked = settings.blur; $("#blur-amt").value = settings.blurAmt; $("#wall-url").value = settings.wallUrl;
-    $("#panic-on").checked = settings.panicOn; $("#panic-key").textContent = settings.panicKey; $("#panic-url").value = settings.panicUrl; $("#music-on").checked = settings.music; $("#games-on").checked = settings.games; $("#ai-on").checked = settings.ai; $("#name").value = settings.name;
+    $("#panic-on").checked = settings.panicOn; $("#panic-key").textContent = settings.panicKey; $("#panic-site").value = settings.panicSite; $("#panic-url").value = settings.panicUrl; $("#panic-url-fld").hidden = settings.panicSite !== "custom"; $("#panic-mode").value = settings.panicMode; $("#music-on").checked = settings.music; $("#games-on").checked = settings.games; $("#ai-on").checked = settings.ai; $("#name").value = settings.name;
     buildAppearance(); say("");
     NV.refreshMusicChips && NV.refreshMusicChips();
   }
@@ -446,7 +459,9 @@
   $("#h24").addEventListener("change", (e) => { settings.h24 = e.target.checked; save(); tickClock(); });
   $("#music-on").addEventListener("change", (e) => { settings.music = e.target.checked; save(); NV.applyMusicToggle && NV.applyMusicToggle(); });
   $("#panic-on").addEventListener("change", (e) => { settings.panicOn = e.target.checked; save(); });
-  $("#panic-url").addEventListener("change", (e) => { let u = e.target.value.trim(); if (u && !/^[a-z][a-z0-9+.-]*:/i.test(u)) u = "https://" + u; settings.panicUrl = u || "https://classroom.google.com"; e.target.value = settings.panicUrl; save(); });
+  $("#panic-site").addEventListener("change", (e) => { settings.panicSite = e.target.value; $("#panic-url-fld").hidden = e.target.value !== "custom"; save(); });
+  $("#panic-mode").addEventListener("change", (e) => { settings.panicMode = e.target.value; save(); });
+  $("#panic-url").addEventListener("change", (e) => { let u = e.target.value.trim(); if (u && !/^[a-z][a-z0-9+.-]*:/i.test(u)) u = "https://" + u; settings.panicUrl = u; e.target.value = u; save(); });
   let capturing = false;
   $("#panic-key").addEventListener("click", (e) => { capturing = true; e.target.textContent = "press a key…"; });
   addEventListener("keydown", (e) => {
