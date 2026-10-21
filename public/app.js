@@ -16,6 +16,7 @@
     wisp: defaultWisp, engine: "https://duckduckgo.com/?q=%s", adblock: true,
     theme: "black", wall: "none", wallUrl: "", blur: true, blurAmt: 14,
     clock: true, h24: true, music: true, games: true, ai: true, name: "",
+    custom: { bg: "#14161a", fg: "#f2f2f2", accent: "#8ab4ff", clock: "", bar: "", font: "jetbrains", size: 100 },
     panicOn: true, panicKey: "F9", panicSite: "classroom", panicUrl: "", panicMode: "replace",
   };
   try { Object.assign(settings, JSON.parse(LS.get("nexvelo.settings", "{}"))); } catch {}
@@ -107,13 +108,53 @@
   setInterval(tickClock, 1000);
 
   /* ================= Themes + wallpapers ================= */
-  const THEMES = [["black", "midnight", "#0a0a0b"], ["white", "paper", "#f6f6f4"], ["sage", "sage", "#c9dcc0"], ["lavender", "lavender", "#d4c9ec"], ["rose", "rose", "#f2c6cd"], ["sky", "sky", "#c3dcf2"], ["peach", "peach", "#f6d2b8"]];
+  const THEMES = [["black", "midnight", "#0a0a0b"], ["white", "paper", "#f6f6f4"], ["sage", "sage", "#c9dcc0"], ["lavender", "lavender", "#d4c9ec"], ["rose", "rose", "#f2c6cd"], ["sky", "sky", "#c3dcf2"], ["peach", "peach", "#f6d2b8"], ["custom", "custom", "#888"]];
   const WALLS = { none: null, forest: () => NVWalls.forest(), ocean: () => NVWalls.ocean(), sky: () => NVWalls.sky() };
   const wallCache = {};
   const wallData = () => LS.get("nexvelo.wallpaper", "");
   const wallSrc = (k) => (k === "custom" ? wallData() || settings.wallUrl : (wallCache[k] ??= WALLS[k] ? WALLS[k]() : null));
 
-  function applyTheme() { document.documentElement.dataset.theme = settings.theme; }
+  /* ----- custom theme: colours, fonts, size ----- */
+  const FONTS = {
+    jetbrains: ["JetBrains Mono", '"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace', "JetBrains+Mono:wght@300;400;500;700"],
+    inter: ["Inter", 'Inter,system-ui,sans-serif', "Inter:wght@300;400;500;700"],
+    poppins: ["Poppins", 'Poppins,system-ui,sans-serif', "Poppins:wght@300;400;500;700"],
+    space: ["Space Grotesk", '"Space Grotesk",system-ui,sans-serif', "Space+Grotesk:wght@300;400;500;700"],
+    dm: ["DM Sans", '"DM Sans",system-ui,sans-serif', "DM+Sans:wght@300;400;500;700"],
+    quicksand: ["Quicksand", 'Quicksand,system-ui,sans-serif', "Quicksand:wght@300;400;500;700"],
+    playfair: ["Playfair Display", '"Playfair Display",Georgia,serif', "Playfair+Display:wght@400;500;700"],
+    lora: ["Lora", 'Lora,Georgia,serif', "Lora:wght@400;500;700"],
+    system: ["System", 'system-ui,-apple-system,"Segoe UI",sans-serif', null],
+    serif: ["Georgia (serif)", 'Georgia,"Times New Roman",serif', null],
+    mono: ["Courier (mono)", '"Courier New",ui-monospace,monospace', null],
+  };
+  const loadedFonts = new Set(["jetbrains"]);
+  function loadFont(k) {
+    const f = FONTS[k]; if (!f || !f[2] || loadedFonts.has(k)) return;
+    loadedFonts.add(k);
+    const l = document.createElement("link"); l.rel = "stylesheet"; l.href = `https://fonts.googleapis.com/css2?family=${f[2]}&display=swap`;
+    document.head.appendChild(l);
+  }
+  const lum = (hex) => { const n = parseInt(hex.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }); return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]; };
+  const contrastOn = (hex) => (lum(hex) > .4 ? "#101010" : "#ffffff");
+  const CUSTOM_VARS = ["--bg", "--fg", "--dim", "--panel", "--card", "--accent", "--accent-fg", "--clock", "--bar", "--font", "--fs"];
+  function applyTheme() {
+    const root = document.documentElement;
+    root.dataset.theme = settings.theme;
+    CUSTOM_VARS.forEach((v) => root.style.removeProperty(v));
+    root.style.colorScheme = "";
+    if (settings.theme !== "custom") return;
+    const c = settings.custom, set = (k, v) => root.style.setProperty(k, v);
+    set("--bg", c.bg); set("--fg", c.fg); set("--panel", c.bg);
+    set("--dim", `color-mix(in srgb, ${c.fg} 58%, transparent)`);
+    set("--card", `color-mix(in srgb, ${c.fg} 9%, ${c.bg})`);
+    set("--accent", c.accent); set("--accent-fg", contrastOn(c.accent));
+    if (c.clock) set("--clock", c.clock);
+    if (c.bar) set("--bar", c.bar);
+    const f = FONTS[c.font] || FONTS.jetbrains; loadFont(c.font); set("--font", f[1]);
+    set("--fs", c.size + "%");
+    root.style.colorScheme = lum(c.bg) > .4 ? "light" : "dark";
+  }
   function applyWall() {
     let src = wallSrc(settings.wall);
     if (settings.wall === "custom" && !/^(https?:|data:image\/)/i.test(src || "")) src = null;
@@ -211,7 +252,7 @@
   // kinds: "web" (home page or a proxied site), "settings", "games"
   const tabs = [];
   let active = null, uid = 0, restoring = false;
-  const PAGES = { settings: $("#page-settings"), music: $("#page-music"), ai: $("#page-ai"), games: $("#page-games"), servers: $("#page-servers") };
+  const PAGES = { settings: $("#page-settings"), music: $("#page-music"), ai: $("#page-ai"), games: $("#page-games") };
   const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   const isHome = (t) => t.kind === "web" && !t.frame;
 
@@ -245,7 +286,6 @@
     if (kind === "settings") loadSettingsUI();
     if (kind === "ai" && NV.onAiOpen) NV.onAiOpen();
     if (kind === "games" && NV.onGamesOpen) NV.onGamesOpen();
-    if (kind === "servers" && NV.onServersOpen) NV.onServersOpen();
     if (opts.url && !opts.lazy) go(t, opts.url);
     else if (kind === "web" && !opts.lazy) t.input.focus({ preventScroll: true });
     return t;
@@ -281,7 +321,7 @@
   async function go(t, raw) {
     if (t.kind !== "web") return;
     const al = String(raw).trim().match(ALIAS);
-    if (al) { if (al[1]) openPage(al[1]); return; }
+    if (al) { if (al[1] === "servers") openSettings("servers"); else if (al[1]) openPage(al[1]); return; }
     const url = resolve(raw);
     if (!url) return;
     loaderStart(t);
@@ -371,13 +411,14 @@
   });
 
   function buildAppearance() {
-    $("#swatches").innerHTML = THEMES.map(([id, label, c]) => `<button class="sw${settings.theme === id ? " on" : ""}" data-theme="${id}"><i style="--c:${c}"></i>${label}</button>`).join("");
+    $("#swatches").innerHTML = THEMES.map(([id, label, c]) => `<button class="sw${settings.theme === id ? " on" : ""}" data-theme="${id}"><i style="--c:${c}"></i>${label}</button>`).join("").replace(/class="sw( on)?" data-theme="custom"/, (m) => m.replace("class=\"sw", "class=\"sw custom"));
     const walls = [["none", "none"], ["forest", "forest"], ["ocean", "ocean"], ["sky", "sky"], ["custom", "custom"]];
     $("#walls").innerHTML = walls.map(([id, label]) => {
       const src = id === "none" ? null : wallSrc(id);
       const thumb = src && /^(https?:|data:image\/)/i.test(src) ? `style="background-image:url('${src.replace(/'/g, "%27")}')"` : "";
       return `<button class="wt${settings.wall === id ? " on" : ""}" data-wall="${id}"><i ${thumb}>${thumb ? "" : id === "none" ? "–" : id === "custom" ? "+" : ""}</i>${label}</button>`;
     }).join("");
+    $("#custom-opts").hidden = settings.theme !== "custom";
     $("#wall-custom").hidden = settings.wall !== "custom";
     $("#wall-clear").hidden = !wallData();
     $("#wall-note").textContent = wallData() ? "using your uploaded image" : "";
@@ -387,6 +428,19 @@
   $("#swatches").addEventListener("click", (e) => {
     const b = e.target.closest("[data-theme]"); if (!b) return;
     settings.theme = b.dataset.theme; save(); applyTheme(); buildAppearance();
+  });
+  $("#c-font").innerHTML = Object.entries(FONTS).map(([k, f]) => `<option value="${k}">${f[0]}</option>`).join("");
+  function loadCustomUI() {
+    const c = settings.custom;
+    $("#c-bg").value = c.bg; $("#c-fg").value = c.fg; $("#c-accent").value = c.accent;
+    $("#c-clock").value = c.clock || c.fg; $("#c-bar").value = c.bar || "#2a2d33"; $("#c-font").value = c.font; $("#c-size").value = c.size;
+  }
+  const customInput = (id, key, mapper = (v) => v) => $(id).addEventListener("input", (e) => { settings.custom[key] = mapper(e.target.value); save(); applyTheme(); });
+  customInput("#c-bg", "bg"); customInput("#c-fg", "fg"); customInput("#c-accent", "accent");
+  customInput("#c-clock", "clock"); customInput("#c-bar", "bar"); customInput("#c-font", "font"); customInput("#c-size", "size", (v) => +v);
+  $("#c-reset").addEventListener("click", () => {
+    settings.custom = { bg: "#14161a", fg: "#f2f2f2", accent: "#8ab4ff", clock: "", bar: "", font: "jetbrains", size: 100 };
+    save(); applyTheme(); loadCustomUI();
   });
   $("#walls").addEventListener("click", (e) => {
     const b = e.target.closest("[data-wall]"); if (!b) return;
@@ -419,6 +473,7 @@
   $("#blur-amt").addEventListener("input", (e) => { settings.blurAmt = +e.target.value; save(); applyWall(); });
 
   function loadSettingsUI() {
+    loadCustomUI();
     $("#wisp-url").value = settings.wisp; $("#engine").value = settings.engine;
     $("#adblock").checked = settings.adblock; $("#clock").checked = settings.clock; $("#h24").checked = settings.h24;
     $("#blur").checked = settings.blur; $("#blur-amt").value = settings.blurAmt; $("#wall-url").value = settings.wallUrl;
@@ -502,7 +557,6 @@
     ["#new-tab", "open a new tab here."],
     ["#open-ai", "an ai assistant in its own tab. it can see your screen, hear you and read files."],
     ["#open-games", "a library of browser games. pick one and it opens in its own tab."],
-    ["#open-servers", "pick or add the wisp server that carries your traffic."],
     ["#open-music", "search youtube music and soundcloud at once. playlists and recents live here too."],
     ["#open-settings", "themes, wallpapers, your wisp server and more."],
     [".view.active .omni", "type a search or a web address and press enter."],
@@ -540,7 +594,6 @@
   $("#open-ai").hidden = !settings.ai;
   $("#open-ai").addEventListener("click", () => openPage("ai"));
   $("#open-games").addEventListener("click", () => openPage("games"));
-  $("#open-servers").addEventListener("click", () => openPage("servers"));
   $("#logo").addEventListener("click", () => newTab());
   restoring = true;
   let saved = null; try { saved = JSON.parse(LS.get("nexvelo.tabs", "null")); } catch {}
