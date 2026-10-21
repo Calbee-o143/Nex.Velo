@@ -1,127 +1,58 @@
-/* Service worker: Scramjet routing + AdBlock */
-importScripts("/scram/scramjet.all.js");
+/* Servers (inside Settings): keep a list of Wisp servers, test their speed, pick one, or let it pick the fastest. */
+(() => {
+  "use strict";
+  const { esc, toast, LS, settings, defaultWisp, testWisp, normalizeWisp } = window.NV;
+  const $ = (s, r = document) => r.querySelector(s);
+  let list = []; try { list = JSON.parse(LS.get("nexvelo.servers", "[]")) || []; } catch {}
+  const speed = {};   // url -> text
+  const ms = {};      // url -> number
+  const persist = () => LS.set("nexvelo.servers", JSON.stringify(list));
+  const all = () => [{ url: defaultWisp, label: "this site (built in)" }, ...list.map((u) => ({ url: u, label: u }))];
 
-const { ScramjetServiceWorker } = $scramjetLoadWorker();
-const scramjet = new ScramjetServiceWorker();
-
-const PREFIX = "/scramjet/"; // must match the controller prefix in index.html
-const SETTINGS_CACHE = "nexus-settings";
-const SETTINGS_KEY = "/__adblock";
-
-/* ---------- AdBlock ---------- */
-const BLOCKED_DOMAINS = [
-  "doubleclick.net", "googlesyndication.com", "googleadservices.com", "google-analytics.com",
-  "googletagmanager.com", "googletagservices.com", "adservice.google.com", "pagead2.googlesyndication.com",
-  "adnxs.com", "adsrvr.org", "advertising.com", "adform.net", "criteo.com", "criteo.net",
-  "taboola.com", "outbrain.com", "revcontent.com", "mgid.com", "zemanta.com",
-  "pubmatic.com", "rubiconproject.com", "openx.net", "casalemedia.com", "indexww.com",
-  "amazon-adsystem.com", "media.net", "moatads.com", "scorecardresearch.com", "quantserve.com",
-  "adsafeprotected.com", "serving-sys.com", "smartadserver.com", "teads.tv", "sharethrough.com",
-  "33across.com", "bidswitch.net", "contextweb.com", "lijit.com", "sovrn.com",
-  "hotjar.com", "mouseflow.com", "fullstory.com", "crazyegg.com", "mxpnl.com",
-  "facebook.net", "connect.facebook.net", "ads.twitter.com", "static.ads-twitter.com",
-  "ads.linkedin.com", "analytics.tiktok.com", "ads.yahoo.com", "adsymptotic.com",
-  "popads.net", "propellerads.com", "exoclick.com", "juicyads.com", "trafficjunky.com",
-  "adcolony.com", "applovin.com", "unity3d.com/ads", "chartboost.com", "inmobi.com",
-  "yandex.ru/ads", "an.yandex.ru", "mc.yandex.ru", "adriver.ru",
-];
-const BLOCKED_PATTERNS = [
-  /\/ads?\/[^/]*\.(js|gif|png|jpg|html)/i,
-  /\/(adserver|adsense|adframe|advert|banner_ads|pagead|prebid)\b/i,
-  /[?&](ad_unit|adunit|ad_slot)=/i,
-  /\/(analytics|gtag|gtm|fbevents)\.js(\?|$)/i,
-];
-
-function hostBlocked(host) {
-  return BLOCKED_DOMAINS.some((d) => {
-    if (d.includes("/")) return false;
-    return host === d || host.endsWith("." + d);
-  });
-}
-
-function decodeTarget(requestUrl) {
-  try {
-    const u = new URL(requestUrl);
-    const raw = u.href.slice(u.origin.length + PREFIX.length);
-    return new URL(decodeURIComponent(raw));
-  } catch {
-    return null;
+  function render() {
+    const html =
+      `<div class="row" style="margin-bottom:.75rem"><button class="btn sv-best">test all and use the fastest</button></div>` +
+      all().map((s) => {
+        const on = settings.wisp === s.url;
+        return `<div class="sv-row${on ? " on" : ""}" data-u="${esc(s.url)}"><b>${esc(s.label)}</b><small>${esc(speed[s.url] || "")}</small>` +
+          `<button class="btn" data-a="test">test</button><button class="btn${on ? "" : " primary"}" data-a="use"${on ? " disabled" : ""}>${on ? "in use" : "use"}</button>` +
+          (s.url === defaultWisp ? "" : '<button class="btn danger" data-a="rm">remove</button>') + "</div>";
+      }).join("");
+    const el = $("#sv2-list"); if (el) el.innerHTML = html;
   }
-}
-
-function shouldBlock(request) {
-  // Never block the page the person is actually navigating to
-  if (request.mode === "navigate" && request.destination === "document") return false;
-  const target = decodeTarget(request.url);
-  if (!target) return false;
-  if (hostBlocked(target.hostname)) return true;
-  return BLOCKED_PATTERNS.some((re) => re.test(target.pathname + target.search));
-}
-
-function emptyResponse(destination) {
-  switch (destination) {
-    case "script":
-      return new Response("/* blocked */", { status: 200, headers: { "content-type": "application/javascript" } });
-    case "style":
-      return new Response("", { status: 200, headers: { "content-type": "text/css" } });
-    case "iframe":
-    case "frame":
-      return new Response("<!doctype html><title>blocked</title>", { status: 200, headers: { "content-type": "text/html" } });
-    default:
-      return new Response(null, { status: 204 });
+  async function test(url) {
+    speed[url] = "testing…"; render();
+    const t0 = performance.now(), ok = await testWisp(url);
+    if (ok) { ms[url] = Math.round(performance.now() - t0); speed[url] = ms[url] + " ms"; } else { delete ms[url]; speed[url] = "unreachable"; }
+    render(); return ok;
   }
-}
+  async function use(url) {
+    try { await window.NV.setWisp(url); toast("now using that server"); } catch { toast("couldn't switch servers. reload and try again."); }
+    render();
+  }
 
-/* ---------- Settings (persist across worker restarts) ---------- */
-let adblockEnabled = true;
-const settingsReady = (async () => {
-  try {
-    const cache = await caches.open(SETTINGS_CACHE);
-    const hit = await cache.match(SETTINGS_KEY);
-    if (hit) adblockEnabled = (await hit.json()).enabled !== false;
-  } catch {}
+  function bind(formId, inputId, listId) {
+    $(formId).addEventListener("submit", (e) => {
+      e.preventDefault();
+      const url = normalizeWisp($(inputId).value); if (!url) return;
+      if (url === defaultWisp || list.includes(url)) toast("that server is already in the list");
+      else { list.push(url); persist(); }
+      $(inputId).value = ""; render(); test(url);
+    });
+    $(listId).addEventListener("click", async (e) => {
+      if (e.target.closest(".sv-best")) {
+        await Promise.all(all().map((s) => test(s.url)));
+        const best = Object.entries(ms).sort((a, b) => a[1] - b[1])[0];
+        if (best) use(best[0]); else toast("none of the servers were reachable");
+        return;
+      }
+      const b = e.target.closest("[data-a]"); if (!b) return;
+      const url = b.closest(".sv-row").dataset.u;
+      if (b.dataset.a === "test") test(url);
+      else if (b.dataset.a === "use") use(url);
+      else if (b.dataset.a === "rm") { list = list.filter((u) => u !== url); persist(); render(); }
+    });
+  }
+  bind("#sv2-form", "#sv2-url", "#sv2-list");
+  render();   // fill the list in Settings and on the servers page
 })();
-
-self.addEventListener("message", (event) => {
-  const data = event.data;
-  if (data && data.type === "adblock") {
-    adblockEnabled = !!data.enabled;
-    event.waitUntil(
-      caches.open(SETTINGS_CACHE).then((c) =>
-        c.put(SETTINGS_KEY, new Response(JSON.stringify({ enabled: adblockEnabled })))
-      )
-    );
-  }
-});
-
-/* ---------- Fetch ---------- */
-async function handleRequest(event) {
-  // Only touch Scramjet for proxied URLs. Opening its database from the worker before the page
-  // has created it leaves an empty database behind, which is what caused the IndexedDB error.
-  const url = new URL(event.request.url);
-  if (!url.pathname.startsWith(PREFIX)) return fetch(event.request);
-
-  await settingsReady;
-  let configured = true;
-  try { await scramjet.loadConfig(); } catch (e) { configured = false; }
-
-  if (configured && scramjet.route(event)) {
-    if (adblockEnabled && shouldBlock(event.request)) {
-      return emptyResponse(event.request.destination);
-    }
-    try {
-      return await scramjet.fetch(event);
-    } catch (err) {
-      // Show the real error inside the page instead of a blank frame
-      const msg = "Nex.Velo proxy error for:\n" + event.request.url + "\n\n" + ((err && err.stack) || String(err));
-      return new Response(msg, { status: 502, headers: { "content-type": "text/plain; charset=utf-8" } });
-    }
-  }
-  return fetch(event.request);
-}
-
-self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
-self.addEventListener("fetch", (event) => {
-  event.respondWith(handleRequest(event));
-});
