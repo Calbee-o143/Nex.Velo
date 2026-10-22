@@ -1,82 +1,56 @@
-/* Games page: GN Math library (via the server) and the Lumin widget. GN Math games open through the proxy in their own tab. */
+/* Games: Poki, DuckMath and Weslack, each loaded through the proxy. Switch between them with the tabs. */
 (() => {
   "use strict";
-  const { esc, LS } = window.NV;
+  const { settings, save, toast, LS, proxyFrame, openUrl } = Object.assign({}, window.NV);
   const $ = (s, r = document) => r.querySelector(s);
-  const PAGE = 60;
-  let mode = "gn", games = null, list = [], shown = 0, loading = false, luminLoaded = false;
-  let recent = []; try { recent = JSON.parse(LS.get("nexvelo.games", "[]")) || []; } catch {}
+  const SITES = {
+    poki: () => "https://poki.com",
+    duckmath: () => "https://duckmath.org",
+    weslack: () => settings.weslackUrl,
+  };
+  const frames = {};
+  let cur = (() => { try { return JSON.parse(LS.get("nexvelo.games", "{}")).site; } catch { return null; } })();
+  if (!SITES[cur]) cur = "poki";
 
-  /* ----- GN Math ----- */
-  async function load() {
-    if (games || loading) return;
-    loading = true; $("#gmsg").textContent = "loading games…";
-    try {
-      const r = await fetch("/api/games");
-      let d = {}; try { d = await r.json(); } catch {}
-      if (r.status === 404) throw new Error("games need the Nex.Velo server (the Railway site), not a static host.");
-      if (!r.ok || !d.games?.length) throw new Error((d.errors || []).slice(0, 2).join(" | ") || "the server returned no games");
-      games = d.games; $("#gmsg").textContent = ""; apply();
-    } catch (e) { $("#gmsg").textContent = "couldn't load the game list. " + e.message; }
-    loading = false;
-  }
-  function apply() {
-    const q = $("#gq").value.trim().toLowerCase();
-    if (q) list = games.filter((g) => g.name.toLowerCase().includes(q));
-    else {
-      const rec = recent.map((id) => games.find((g) => g.id === id)).filter(Boolean);
-      list = [...rec, ...games.filter((g) => !rec.includes(g))];
+  const msg = (t) => { $("#gmsg").textContent = t || ""; };
+
+  async function show(k) {
+    cur = k; LS.set("nexvelo.games", JSON.stringify({ site: k }));
+    document.querySelectorAll("#gtabs button").forEach((b) => b.classList.toggle("on", b.dataset.g === k));
+    for (const f of Object.values(frames)) f.hidden = true;
+    const url = SITES[k]();
+    $("#g-setup").hidden = !(k === "weslack");
+    if (!url) { msg("add the weslack address above to load it."); return; }
+    $("#g-wurl").value = k === "weslack" ? url : "";
+    if (!frames[k]) {
+      msg("loading " + k + " through the proxy…");
+      try {
+        const el = await proxyFrame(url);
+        el.hidden = cur !== k;
+        el.addEventListener("load", () => { if (cur === k) msg(""); });
+        frames[k] = el; $("#gframes").appendChild(el);
+        setTimeout(() => { if (cur === k) msg(""); }, 12000);
+      } catch (e) { msg("couldn't start the proxy: " + (e.message || e)); return; }
     }
-    shown = 0; $("#ggrid").innerHTML = ""; more();
-    $("#gcount").textContent = `${list.length} game${list.length === 1 ? "" : "s"}`;
-    $("#gmsg").textContent = list.length ? "" : "no games match that search.";
+    frames[k].hidden = false;
+    if (frames[k].contentDocument?.readyState === "complete") msg("");
   }
-  function more() {
-    const next = list.slice(shown, shown + PAGE); shown += next.length;
-    $("#ggrid").insertAdjacentHTML("beforeend", next.map((g) => `<button class="gcard" data-id="${esc(g.id)}"><i style="background-image:url('${esc(g.cover)}')"></i><span>${esc(g.name)}</span></button>`).join(""));
-    $("#gmore").hidden = shown >= list.length;
-  }
-  $("#gq").addEventListener("input", () => games && apply());
-  $("#gmore").addEventListener("click", more);
-  $(".gwrap", $("#page-games")).addEventListener("scroll", (e) => { const el = e.target; if (mode === "gn" && !$("#gmore").hidden && el.scrollTop + el.clientHeight > el.scrollHeight - 400) more(); });
-  $("#ggrid").addEventListener("click", (e) => {
-    const c = e.target.closest(".gcard"); if (!c) return;
-    const id = c.dataset.id;
-    recent = [id, ...recent.filter((x) => x !== id)].slice(0, 12);
-    LS.set("nexvelo.games", JSON.stringify(recent));
-    window.NV.openUrl(location.origin + "/play/" + encodeURIComponent(id));
+
+  $("#gtabs").addEventListener("click", (e) => { const b = e.target.closest("[data-g]"); if (b) show(b.dataset.g); });
+  $("#g-reload").addEventListener("click", () => {
+    const f = frames[cur]; if (!f) return show(cur);
+    try { f.contentWindow.location.reload(); msg("reloading…"); setTimeout(() => msg(""), 8000); } catch { f.remove(); delete frames[cur]; show(cur); }
+  });
+  $("#g-open").addEventListener("click", () => { const u = SITES[cur](); if (u) window.NV.openUrl(u); else toast("add the weslack address first"); });
+  $("#g-setup").addEventListener("submit", (e) => {
+    e.preventDefault();
+    let u = $("#g-wurl").value.trim(); if (!u) return;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = "https://" + u;
+    settings.weslackUrl = u; save();
+    if (frames.weslack) { frames.weslack.remove(); delete frames.weslack; }
+    show("weslack");
   });
 
-  /* ----- Lumin widget (script is served from our own server so a blocked CDN doesn't matter) ----- */
-  async function loadLumin() {
-    if (luminLoaded) return;
-    luminLoaded = true; $("#lmsg").textContent = "loading lumin…";
-    try {
-      await new Promise((res, rej) => {
-        const s = document.createElement("script");
-        s.src = "/vendor/lumin.js"; s.onload = res; s.onerror = () => rej(new Error("the lumin script couldn't be loaded"));
-        document.head.appendChild(s);
-      });
-      if (!window.Lumin) throw new Error("the lumin script didn't start");
-      window.Lumin.init({
-        container: "#lumin-box", theme: "dark", columns: 6, rows: 4,
-        onReady: () => { $("#lmsg").textContent = ""; },
-        onError: (e) => { $("#lmsg").textContent = "lumin couldn't load its games: " + (e && e.message ? e.message : e); },
-      });
-      setTimeout(() => { if ($("#lmsg").textContent === "loading lumin…") $("#lmsg").textContent = ""; }, 6000);
-    } catch (e) { luminLoaded = false; $("#lmsg").textContent = e.message; }
-  }
-
-  /* ----- tabs ----- */
-  $("#gtabs").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-g]"); if (!b) return;
-    mode = b.dataset.g;
-    document.querySelectorAll("#gtabs button").forEach((x) => x.classList.toggle("on", x === b));
-    $("#g-gn").hidden = mode !== "gn"; $("#g-lumin").hidden = mode !== "lumin";
-    $("#gq").hidden = $("#gcount").hidden = mode !== "gn";
-    mode === "gn" ? load() : loadLumin();
-  });
-
-  window.NV.onGamesOpen = () => { mode === "gn" ? load() : loadLumin(); };
-  if (document.querySelector("#views #page-games")) window.NV.onGamesOpen();   // restored from a previous visit
+  window.NV.onGamesOpen = () => show(cur);
+  if (document.querySelector("#views #page-games")) show(cur);   // restored from a previous visit
 })();
