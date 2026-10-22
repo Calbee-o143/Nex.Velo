@@ -16,6 +16,7 @@
     wisp: defaultWisp, engine: "https://duckduckgo.com/?q=%s", adblock: true,
     theme: "black", wall: "none", wallUrl: "", blur: true, blurAmt: 14,
     clock: true, h24: true, music: true, games: true, ai: true, name: "",
+    weslackUrl: "",
     custom: { bg: "#14161a", fg: "#f2f2f2", accent: "#8ab4ff", clock: "", bar: "", font: "jetbrains", size: 100 },
     panicOn: true, panicKey: "F9", panicSite: "classroom", panicUrl: "", panicMode: "replace",
   };
@@ -587,6 +588,7 @@
   /* ================= Boot ================= */
   const NV = window.NV = {
     settings, save, esc, toast, spring, openSettings, openPage, openUrl: (u) => newTab({ url: u }), LS, defaultWisp, testWisp, normalizeWisp,
+    proxyFrame: async (url) => { await ready; const f = scramjet.createFrame(); f.go(url); return f.frame; },
     setWisp: async (url) => { settings.wisp = url; save(); $("#wisp-url").value = url; await applyTransport(); },
   };
   applyTheme(); applyWall();
