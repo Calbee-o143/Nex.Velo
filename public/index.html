@@ -217,6 +217,35 @@ html{font-size:var(--fs,100%)}
 .gframes iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff}
 .gframes iframe[hidden]{display:none}
 .gpage .msg{position:absolute;left:0;right:0;bottom:2rem;pointer-events:none}
+/* bookmarks, dialogs, launch choice, recommended music */
+.home .marks{margin-top:-1rem}
+.marks{width:min(560px,100%);display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.75rem}
+.mark{position:relative;min-width:0}
+.mark-b,.mark.add{width:100%;aspect-ratio:1;border-radius:1rem;background:var(--btn);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.4rem;padding:.5rem;color:var(--fg);min-width:0}
+.mark-b:hover,.mark.add:hover{background:var(--btn-h)}
+.mark-b img,.mark-b .ph{width:1.75rem;height:1.75rem;border-radius:.4rem;object-fit:contain;display:block}
+.mark-b .ph{display:grid;place-items:center;background:var(--accent);color:var(--accent-fg);font-style:normal;font-weight:600;font-size:.9rem}
+.mn{font-size:.6875rem;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mark.add{font-size:1.75rem;font-weight:300;color:var(--dim)}
+.mark-x,.mark-e{position:absolute;top:.25rem;width:1.25rem;height:1.25rem;border-radius:50%;font-size:.7rem;line-height:1;background:var(--chrome);color:var(--fg);opacity:0;display:grid;place-items:center}
+.mark-x{right:.25rem}.mark-e{left:.25rem}
+.mark:hover .mark-x,.mark:hover .mark-e,.mark:focus-within .mark-x,.mark:focus-within .mark-e{opacity:.9}
+@media (hover:none){.mark-x,.mark-e{opacity:.55}}
+.dlg{position:fixed;inset:0;z-index:90;display:grid;place-items:center;background:rgba(0,0,0,.55);padding:1rem}
+.dlg form,.lcard{background:var(--panel);color:var(--fg);padding:1.5rem;border-radius:1.25rem;width:min(22rem,92vw)}
+.lcard{width:min(26rem,92vw);padding:1.75rem;text-align:center;display:flex;flex-direction:column;gap:.875rem;align-items:center}
+.lcard h2{margin:0;font-size:1.25rem;font-weight:500;letter-spacing:-.02em}
+.llogo{width:4rem;height:4rem;border-radius:1rem}
+.lbig{width:100%;height:3rem}
+.lbig em{font-style:normal;font-size:.6875rem;background:var(--accent-fg);color:var(--accent);padding:.125rem .5rem;border-radius:.5rem;margin-left:.5rem}
+.lsub{margin:0;font-size:.75rem;color:var(--dim)}
+.chk{display:flex;gap:.5rem;align-items:center;font-size:.8125rem;color:var(--dim)}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(7.5rem,1fr));gap:.75rem;margin-bottom:1rem}
+.rcard{text-align:left;padding:.5rem;border-radius:.875rem;background:var(--btn);min-width:0}
+.rcard:hover{background:var(--btn-h)}
+.rcard img{width:100%;aspect-ratio:1;border-radius:.625rem;object-fit:cover;background:var(--card);display:block;margin-bottom:.5rem}
+.rcard b{display:block;font-size:.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rcard span{display:block;font-size:.6875rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* modals */
 #scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;z-index:20}
 .modal{position:fixed;left:50%;top:50%;width:min(880px,94vw);height:min(600px,86vh);display:none;z-index:21;opacity:var(--o,0);transform:translate(-50%,-50%) scale(var(--s,.96));background:var(--panel);color:var(--fg);border:1px solid var(--hair);border-radius:1.5rem;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.45)}
@@ -371,6 +400,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
         <h2>general</h2>
         
         <label class="fld"><span>search engine</span><select id="engine"><option value="https://duckduckgo.com/?q=%s">DuckDuckGo</option><option value="https://www.google.com/search?q=%s">Google</option><option value="https://www.bing.com/search?q=%s">Bing</option><option value="https://search.brave.com/search?q=%s">Brave Search</option></select></label>
+        <h3>opening</h3>
+        <label class="fld"><span>when Nex.Velo opens</span><select id="launch-mode"><option value="ask">ask me each time</option><option value="blank">always open in about:blank (recommended)</option><option value="here">always open on this page</option></select></label>
+        <label class="switch"><div><b>jump to the escape page</b><small>after opening in about:blank, this tab switches to your escape page</small></div><input type="checkbox" id="launch-redirect"></label>
         <h3>escape key</h3>
         <label class="switch"><div><b>escape key</b><small>press it anywhere to jump to a safe page right away</small></div><input type="checkbox" id="panic-on"></label>
         <div class="row" style="margin-bottom:.75rem"><button class="btn" id="panic-key" title="Click, then press a key">F9</button>
@@ -417,10 +449,10 @@ input[type=range]{width:100%;accent-color:var(--accent)}
         <p>wisp servers carry your traffic. set the one you use, add more, test how fast each one is, or let it pick the fastest.</p>
         <h3>current server</h3>
         <label class="fld"><span>address</span><input type="text" id="wisp-url" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="wss://example.com/wisp/"></label>
-        <div class="row"><button class="btn" id="wisp-test">test</button><button class="btn" id="wisp-default">use this site</button><button class="btn primary" id="wisp-save">save server</button></div>
+        <div class="row"><button class="btn" id="wisp-test">test</button><button class="btn" id="wisp-default">use the Nex.Velo server</button><button class="btn primary" id="wisp-save">save server</button></div>
         <div id="status" role="status" aria-live="polite"></div>
         <h3>saved servers</h3>
-        <form class="newpl" id="sv2-form"><input id="sv2-url" type="text" placeholder="wss://example.com/wisp/" autocomplete="off" spellcheck="false" autocapitalize="off"><button class="btn primary" type="submit">add</button></form>
+        <form class="newpl" onsubmit="return false" id="sv2-form"><input id="sv2-url" type="text" placeholder="wss://example.com/wisp/" autocomplete="off" spellcheck="false" autocapitalize="off"><button class="btn primary" type="submit">add</button></form>
         <div id="sv2-list"></div>
       </div>
       <div class="sec" id="sec-extensions">
@@ -443,17 +475,16 @@ input[type=range]{width:100%;accent-color:var(--accent)}
         <p>cool web proxy, a sub-brand of Nexero. developed by the Nexero Team.</p>
         <div class="row"><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none;color:inherit" href="https://guns.lol/Nex.Mav" target="_blank" rel="noopener">guns.lol</a></div>
         <div class="about-row"><div><b>tour</b><small>a quick walkthrough of where everything is</small></div><button class="btn" id="tour-btn">take the tour</button></div>
-        <p style="margin-top:2rem;font-size:.75rem">v0.98.9 · scramjet 1.1.0 · libcurl transport · wisp</p>
+        <p style="margin-top:2rem;font-size:.75rem"><span id="ver">v0.99.5</span> · scramjet 1.1.0 · libcurl transport · wisp</p>
       </div>
     </div>
   </div>
 </section>
 <section class="page" id="page-games">
   <div class="gpage">
-    <div class="ghead"><div class="mtabs" id="gtabs"><button class="on" data-g="poki">poki</button><button data-g="duckmath">duckmath</button><button data-g="weslack">weslack</button></div>
+    <div class="ghead"><div class="mtabs" id="gtabs"><button class="on" data-g="duckmath">duckmath</button><button data-g="weslack">weslack</button></div>
       <button class="btn" id="g-reload">reload</button><button class="btn" id="g-open">open in its own tab</button></div>
-    <form class="newpl gsetup" id="g-setup" hidden><input id="g-wurl" type="text" placeholder="paste the weslack address, e.g. https://…" autocomplete="off" spellcheck="false" autocapitalize="off"><button class="btn primary" type="submit">save</button></form>
-    <div class="gframes" id="gframes"></div>
+        <div class="gframes" id="gframes"></div>
     <div class="msg" id="gmsg"></div>
   </div>
 </section>
@@ -463,8 +494,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
       <div class="mhead"><div class="mtabs"><button class="on" data-mt="search">search</button><button data-mt="playlists">playlists</button><button data-mt="recent">recent</button></div></div>
       <div class="mbody">
         <div class="mt on" id="mt-search">
-          <form id="msearch"><input id="mq" type="text" placeholder="search songs and artists" autocomplete="off" spellcheck="false"></form>
+          <form onsubmit="return false" id="msearch"><input id="mq" type="text" placeholder="search songs and artists" autocomplete="off" spellcheck="false"></form>
           <div class="src" id="msrc"></div>
+          <div id="mrec"></div>
           <div id="mresults"><div class="msg">search once, get the closest match from youtube music and soundcloud.</div></div>
         </div>
         <div class="mt" id="mt-playlists"><div id="plist"></div></div>
@@ -496,7 +528,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
       <div class="aimsgs" id="ai-msgs"></div>
       <div class="aiatt" id="ai-att" hidden></div>
       <video class="aishare" id="ai-share-v" muted playsinline hidden></video>
-      <form class="aiform" id="ai-form">
+      <form class="aiform" onsubmit="return false" id="ai-form">
         <button class="ib" type="button" id="ai-attach" title="Attach images or text files" aria-label="Attach"><svg viewBox="0 0 24 24"><path d="M21 11l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/></svg></button>
         <input type="file" id="ai-file" multiple accept="image/*,.txt,.md,.csv,.json,.js,.ts,.py,.html,.css,.java,.c,.cpp,.go,.rs,.sh,.log,.xml,.yml,.yaml" hidden>
         <button class="ib" type="button" id="ai-voice" title="Voice chat" aria-label="Voice chat"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
@@ -520,6 +552,24 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div id="prog"><i></i></div>
 </div>
 <button id="m-open" aria-label="Show player" hidden><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+<div id="mark-dlg" class="dlg" hidden>
+  <form id="mark-form" onsubmit="return false">
+    <h3 id="mark-title" style="margin:0 0 1rem;font-size:1.125rem;font-weight:500">add a bookmark</h3>
+    <label class="fld"><span>name</span><input id="mark-name" type="text" maxlength="14" autocomplete="off" placeholder="e.g. Docs"></label>
+    <label class="fld"><span>link</span><input id="mark-url" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="https://example.com"></label>
+    <div class="row"><button class="btn primary" type="submit">save</button><button class="btn" type="button" id="mark-cancel">cancel</button></div>
+  </form>
+</div>
+<div id="launch" class="dlg" hidden>
+  <div class="lcard">
+    <img class="llogo" src="/logo.png" alt="">
+    <h2>how do you want to open Nex.Velo?</h2>
+    <button class="btn primary lbig" id="l-blank">open in about:blank <em>recommended</em></button>
+    <p class="lsub">opens Nex.Velo inside a blank page so the address stays hidden. this tab then jumps to your escape page.</p>
+    <button class="btn lbig" id="l-here">just open it on this page</button>
+    <label class="chk" id="l-remember-row"><input type="checkbox" id="l-remember"> remember my choice</label>
+  </div>
+</div>
 <div id="pop" hidden></div>
 <div id="toast" role="status"></div>
 <div id="tour" hidden><div id="tour-hl"></div><div id="tour-card"><p id="tour-text"></p><div class="row"><button class="btn primary" id="tour-next">next</button><button class="btn" id="tour-skip">skip</button></div></div></div>
@@ -528,9 +578,5 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <script src="/scram/scramjet.all.js"></script>
 <script src="/wallpapers.js"></script>
 <script src="/app.js"></script>
-<script src="/music.js"></script>
-<script src="/ai.js"></script>
-<script src="/games.js"></script>
-<script src="/servers.js"></script>
 </body>
 </html>
