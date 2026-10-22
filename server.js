@@ -23,6 +23,16 @@ const app = Fastify({
     }),
 });
 
+// Let other hosts (e.g. the Vercel copy of the site) call the API on this server.
+app.addHook("onRequest", async (req, reply) => {
+  if (!req.url.startsWith("/api/")) return;
+  reply.header("access-control-allow-origin", "*")
+    .header("access-control-allow-headers", "content-type,x-groq-key")
+    .header("access-control-allow-methods", "GET,POST,OPTIONS")
+    .header("access-control-expose-headers", "x-model");
+  if (req.method === "OPTIONS") { reply.code(204); return reply.send(); }
+});
+
 app.addContentTypeParser(/^audio\/.*/, { parseAs: "buffer" }, (req, body, done) => done(null, body));
 
 /* ================= Music search: YouTube Music + SoundCloud ================= */
@@ -195,6 +205,43 @@ app.get("/api/music/alt", async (req, reply) => {
     const best = rows.map((t) => ({ ...t, score: score(q, t) })).sort((a, b) => b.score - a.score)[0];
     return { track: best || null };
   } catch (e) { reply.code(502); return { track: null, error: String(e?.message || e) }; }
+});
+
+/* ================= Recommended music (a fixed list of well-known songs, matched through the same search) ================= */
+const RECOMMENDED = [
+  "Blinding Lights The Weeknd", "Levitating Dua Lipa", "As It Was Harry Styles", "Flowers Miley Cyrus",
+  "Anti-Hero Taylor Swift", "Espresso Sabrina Carpenter", "Starboy The Weeknd", "Heat Waves Glass Animals",
+  "Sunflower Post Malone", "good 4 u Olivia Rodrigo", "Stay The Kid LAROI Justin Bieber", "Shape of You Ed Sheeran",
+];
+let recCache = { t: 0, tracks: [] };
+app.get("/api/music/recommended", async () => {
+  if (recCache.tracks.length && Date.now() - recCache.t < 6 * 60 * 60 * 1000) return { tracks: recCache.tracks };
+  const tracks = [];
+  for (let i = 0; i < RECOMMENDED.length; i += 4) {   // four searches at a time
+    const batch = await Promise.allSettled(RECOMMENDED.slice(i, i + 4).map((q) => musicSearch(q)));
+    for (const r of batch) { const t = r.status === "fulfilled" && r.value.results?.[0]; if (t) tracks.push(t); }
+  }
+  if (tracks.length) recCache = { t: Date.now(), tracks };
+  return { tracks };
+});
+
+/* ================= Site icons for bookmarks (fetched here so a blocked network doesn't matter) ================= */
+app.get("/api/favicon", async (req, reply) => {
+  const host = String(req.query?.host || "").toLowerCase();
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) || host.length > 120) { reply.code(400); return ""; }
+  const urls = [`https://icons.duckduckgo.com/ip3/${host}.ico`, `https://www.google.com/s2/favicons?domain=${host}&sz=64`];
+  for (const u of urls) {
+    try {
+      const r = await withTimeout(fetch(u, { headers: { "user-agent": UA } }), 6000);
+      const type = r.headers.get("content-type") || "";
+      if (!r.ok || !/image/i.test(type)) continue;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length < 60) continue;
+      reply.header("content-type", type).header("cache-control", "public, max-age=604800");
+      return reply.send(buf);
+    } catch {}
+  }
+  reply.code(404); return "";
 });
 
 /* ================= Lyrics (LRCLIB, the same free community library Versed uses) ================= */
