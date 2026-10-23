@@ -244,6 +244,101 @@ app.get("/api/favicon", async (req, reply) => {
   reply.code(404); return "";
 });
 
+/* ================= Live visitors (anonymous, counted while a page keeps pinging) ================= */
+const visitors = new Map();
+const liveCount = () => { const now = Date.now(); for (const [id, t] of visitors) if (now - t > 60000) visitors.delete(id); return visitors.size; };
+app.get("/api/live", async () => ({ count: liveCount() }));
+app.post("/api/live/ping", async (req) => {
+  const id = String(req.body?.id || "");
+  if (/^[a-z0-9-]{8,48}$/i.test(id)) visitors.set(id, Date.now());
+  return { count: liveCount() };
+});
+
+/* ================= Game search for DuckMath and Weslack =================
+   The game list is read from each site's sitemap (or its home page links). Opening a game finds the
+   game's own player frame so the site's menus and ads can be left out. Both depend on how each site is built. */
+const GAME_SITES = { duckmath: "https://duckmath.org", weslack: "https://weslack.com" };
+const SKIP_SLUG = /^(about|about-us|contact|contact-us|privacy|privacy-policy|terms|terms-of-service|dmca|search|category|categories|tag|tags|page|login|register|blog|sitemap|feed|cookie|cookies|policy|faq|help|games|new|popular|top|best|all|home|index|404)$/i;
+const titleCase = (t) => t.replace(/[-_+]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
+async function fetchText(url) {
+  const r = await withTimeout(fetch(url, { headers: { "user-agent": UA, accept: "text/html,application/xml,*/*" }, redirect: "follow" }), 12000);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.text();
+}
+const locs = (xml) => [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1].replace(/&amp;/g, "&"));
+const gameFromUrl = (u, host) => {
+  try {
+    const x = new URL(u);
+    if (x.hostname.replace(/^www\./, "") !== host) return null;
+    const segs = x.pathname.split("/").filter(Boolean);
+    if (!segs.length || segs.length > 3) return null;
+    const slug = decodeURIComponent(segs[segs.length - 1]).replace(/\.html?$/i, "");
+    if (!slug || SKIP_SLUG.test(slug) || /^(category|tag|page|author|search)$/i.test(segs[0]) || /\.(xml|png|jpe?g|gif|css|js|txt|ico)$/i.test(slug)) return null;
+    return { name: titleCase(slug), url: x.href };
+  } catch { return null; }
+};
+const gamesCache = {};
+async function siteGames(key) {
+  const hit = gamesCache[key];
+  if (hit && Date.now() - hit.t < 60 * 60 * 1000 && hit.list.length) return hit;
+  const base = GAME_SITES[key], host = new URL(base).hostname.replace(/^www\./, "");
+  let urls = [], tried = [];
+  try {
+    let l = locs(await fetchText(base + "/sitemap.xml"));
+    const subs = l.filter((u) => /\.xml(\?|$)/i.test(u));
+    if (subs.length) { l = l.filter((u) => !/\.xml(\?|$)/i.test(u)); for (const s of subs.slice(0, 10)) { try { l.push(...locs(await fetchText(s))); } catch {} } }
+    urls = l;
+  } catch (e) { tried.push("sitemap.xml: " + e.message); }
+  if (!urls.length) {
+    try {
+      const robots = await fetchText(base + "/robots.txt");
+      for (const sm of [...robots.matchAll(/^sitemap:\s*(\S+)/gim)].map((m) => m[1]).slice(0, 4)) { try { urls.push(...locs(await fetchText(sm))); } catch {} }
+    } catch (e) { tried.push("robots.txt: " + e.message); }
+  }
+  let list = urls.map((u) => gameFromUrl(u, host)).filter(Boolean);
+  if (list.length < 5) {   // fall back to the links on the home page
+    try {
+      const html = await fetchText(base + "/");
+      for (const m of html.matchAll(/<a\s[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+        let abs; try { abs = new URL(m[1], base + "/").href; } catch { continue; }
+        const g = gameFromUrl(abs, host); if (!g) continue;
+        const alt = (m[2].match(/\balt=["']([^"']+)["']/i) || [])[1];
+        const text = m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        g.name = (alt || (text.length > 1 && text.length < 60 ? text : g.name)).slice(0, 60);
+        list.push(g);
+      }
+    } catch (e) { tried.push("home page: " + e.message); }
+  }
+  const seen = new Set(); list = list.filter((g) => !seen.has(g.url) && seen.add(g.url));
+  list.sort((a, b) => a.name.localeCompare(b.name));
+  const out = { t: Date.now(), list, tried };
+  if (list.length) gamesCache[key] = out;
+  return out;
+}
+app.get("/api/games/list", async (req, reply) => {
+  const site = String(req.query?.site || "");
+  if (!GAME_SITES[site]) { reply.code(400); return { error: "unknown site" }; }
+  const g = await siteGames(site);
+  if (!g.list.length) { reply.code(502); return { games: [], error: "couldn't read the game list. " + g.tried.join("; ") }; }
+  return { games: g.list.map(({ name, url }) => ({ name, url })), count: g.list.length };
+});
+const BAD_FRAME = /(googletagmanager|doubleclick|googlesyndication|facebook\.|twitter\.|youtube\.com\/embed|disqus|adservice|recaptcha|addthis|gstatic)/i;
+app.get("/api/games/open", async (req, reply) => {
+  const site = String(req.query?.site || ""), url = String(req.query?.url || "");
+  if (!GAME_SITES[site]) { reply.code(400); return { error: "unknown site" }; }
+  let host; try { host = new URL(url).hostname.replace(/^www\./, ""); } catch { reply.code(400); return { error: "bad url" }; }
+  if (host !== new URL(GAME_SITES[site]).hostname.replace(/^www\./, "")) { reply.code(400); return { error: "that address isn't on this site" }; }
+  try {
+    const html = await fetchText(url);
+    for (const m of html.matchAll(/<iframe\b[^>]*?\b(?:data-src|src)=["']([^"']+)["'][^>]*>/gi)) {
+      if (BAD_FRAME.test(m[1])) continue;
+      let src; try { src = new URL(m[1], url).href; } catch { continue; }
+      if (/^https?:/i.test(src)) return { embed: src };
+    }
+    return { embed: null };
+  } catch (e) { reply.code(502); return { embed: null, error: String(e?.message || e) }; }
+});
+
 /* ================= Lyrics (LRCLIB, the same free community library Versed uses) ================= */
 const lyricCache = new Map();
 const cleanTitle = (t) =>
