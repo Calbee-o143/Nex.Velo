@@ -1,4 +1,3 @@
-@@ -0,0 +1,365 @@
 /* Music: search YouTube Music + SoundCloud, play through the Nex.Velo server, lyrics, playlists, recently played. */
 (() => {
   "use strict";
@@ -48,7 +47,7 @@
   async function onFail() {
     if (!cur) return;
     const k = key(cur);
-    if (failedOnce.has(k)) { setPlaying(false); toast("couldn't play that track. try another."); return; }
+    if (failedOnce.has(k)) { setPlaying(false); toast("couldn't play that: " + (await reasonFor(cur) || "the server couldn't get the audio") + ". try another."); return; }
     failedOnce.add(k);
     // YouTube can refuse server downloads. Try the same song on SoundCloud instead.
     if (cur.source === "youtube") {
@@ -62,7 +61,16 @@
         }
       } catch {}
     }
-    setPlaying(false); toast("couldn't play that track. try another.");
+    setPlaying(false); toast("couldn't play that: " + (await reasonFor(cur) || "the server couldn't get the audio") + ". try another.");
+  }
+  // Ask the stream address for the real reason, so the message says what went wrong
+  async function reasonFor(t) {
+    try {
+      const r = await fetch(srcFor(t), { headers: { range: "bytes=0-1" } });
+      if (r.ok || r.status === 206) return "";
+      const d = await r.json().catch(() => ({}));
+      return d.error || "the server answered " + r.status;
+    } catch { return "can't reach the music server"; }
   }
 
   /* ---------- playback control ---------- */
@@ -197,7 +205,8 @@
   let rec = [], recLoaded = false;
   async function loadRec() {
     if (recLoaded) return; recLoaded = true;
-    try { const d = await (await fetch("/api/music/recommended")).json(); rec = d.tracks || []; renderRec(); } catch { recLoaded = false; }
+    try { const d = await (await fetch("/api/music/recommended")).json(); rec = d.tracks || []; renderRec(); if (!rec.length && $("#mrec")) $("#mrec").innerHTML = '<div class="msg">recommendations aren\'t available right now. search for a song above.</div>'; }
+    catch { recLoaded = false; if ($("#mrec")) $("#mrec").innerHTML = '<div class="msg">can\'t reach the music server, so there are no recommendations yet.</div>'; }
   }
   function renderRec() {
     const box = $("#mrec"); if (!box) return;
@@ -306,7 +315,11 @@
       if (!results.length && data.errors && Object.keys(data.errors).length) {
         renderResults("both sources failed: " + Object.entries(data.errors).map(([k, v]) => `${k} (${v})`).join(", "));
       } else renderResults();
-    } catch (err) { results = []; renderResults(err.message || "search failed"); }
+    } catch (err) {
+      results = [];
+      const net = err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(err.message || "");
+      renderResults(net ? "can't reach the music server. if this site is on Vercel, deploy the api and lib folders (or start the Railway server), then try again." : err.message || "search failed");
+    }
   });
 
   document.addEventListener("click", (e) => {
