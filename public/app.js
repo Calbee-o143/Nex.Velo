@@ -10,7 +10,7 @@
     del: (k) => { try { localStorage.removeItem(k); } catch {} },
   };
 
-  const VERSION = "0.99.6";
+  const VERSION = "0.99.7";
   // The API (AI, music, lyrics...) lives on the Nex.Velo server. Ask this host first, then the Railway server.
   const _fetch = window.fetch.bind(window);
   let API = "";
@@ -711,11 +711,39 @@
     return true;
   }
   apiReady.then(renderMarks);
-  addEventListener("load", () => setTimeout(() => {
+  const checkModules = () => {
     const need = { music: "music.js", ai: "ai.js", games: "games.js", servers: "servers.js" };
     const miss = Object.entries(need).filter(([k]) => !NV.loaded[k]).map(([, f]) => f);
     if (miss.length) showBanner("these parts couldn't start: " + miss.join(", ") + ". upload the newest files to the public folder and clear the CDN cache.");
-  }, 800));
+  };
+  if (window.__nvScriptsDone) setTimeout(checkModules, 300); else addEventListener("nv-scripts", () => setTimeout(checkModules, 300), { once: true });
+
+  /* ================= Automatic updates ================= */
+  // version.json on the host holds the newest version number. When it differs from this page, offer the update and apply it.
+  let updating = false, laterUntil = 0;
+  const typing = () => { const a = document.activeElement; return !!a && /^(INPUT|TEXTAREA)$/.test(a.tagName) && !!a.value && a.type !== "range" && a.type !== "checkbox"; };
+  function applyUpdate(v) { location.replace(location.pathname + "?nv=" + encodeURIComponent(v) + location.hash); }
+  function offerUpdate(v) {
+    const bar = $("#update"); if (!bar || updating || Date.now() < laterUntil) return;
+    updating = true; let n = 20;
+    const paint = () => { bar.innerHTML = `<span>Nex.Velo v${esc(v)} is ready. updating in ${n}s…</span><button class="btn" data-now type="button">update now</button><button class="btn" data-later type="button">later</button>`; };
+    paint(); bar.hidden = false;
+    const tick = setInterval(() => { if (typing()) { n = 20; paint(); return; } if (--n <= 0) { clearInterval(tick); applyUpdate(v); } else paint(); }, 1000);
+    bar.onclick = (e) => {
+      if (e.target.closest("[data-now]")) { clearInterval(tick); applyUpdate(v); }
+      if (e.target.closest("[data-later]")) { clearInterval(tick); bar.hidden = true; updating = false; laterUntil = Date.now() + 30 * 60 * 1000; }
+    };
+  }
+  async function checkUpdate() {
+    try {
+      const r = await _fetch("/version.json?t=" + Date.now(), { cache: "no-store" });
+      if (r.ok) { const v = (await r.json()).version; if (v && v !== VERSION) offerUpdate(v); }
+    } catch {}
+    try { const reg = await navigator.serviceWorker?.getRegistration(); reg && reg.update(); } catch {}
+  }
+  setTimeout(checkUpdate, 20000);
+  setInterval(checkUpdate, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });
   (function launchChoice() {
     if (window.top !== window.self || settings.launch === "here") return;   // already wrapped, or the user chose "here"
     const box = $("#launch");
