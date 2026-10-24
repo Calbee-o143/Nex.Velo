@@ -8,7 +8,7 @@
   const TEXT_EXT = /\.(txt|md|csv|json|js|ts|py|html|css|java|c|cpp|go|rs|sh|log|xml|ya?ml)$/i;
   let db = { cur: null, model: "openai/gpt-oss-20b", chats: [] };
   try { db = { ...db, ...JSON.parse(LS.get("nexvelo.ai", "{}")) }; } catch {}
-  let busy = false, serverKey = null, attachments = [], share = null, voiceOn = false, listening = null;
+  let busy = false, serverKey = null, attachments = [], share = null, voiceOn = false, listening = null, showKey = false;
   const save = () => LS.set("nexvelo.ai", JSON.stringify(db));
   const chat = () => db.chats.find((c) => c.id === db.cur);
   const getKey = () => LS.get("nexvelo.aikey", "");
@@ -21,6 +21,27 @@
       return esc(p).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
     }).join("");
   }
+  const needKey = () => !getKey() && serverKey !== true;
+  function renderKeyCard() {
+    const box = $("#ai-key-card"); if (!box) return;
+    const show = needKey() || showKey;
+    box.hidden = !show; if (!show) return;
+    box.innerHTML = `<b>${getKey() ? "your Groq api key" : "one quick step"}</b>
+      <p>nex.ai runs on Groq. get a free key at <u>console.groq.com/keys</u>, paste it here and you're set. it stays in this browser and is only sent with your messages.</p>
+      <form id="ai-keyform" onsubmit="return false"><input id="ai-keyin" type="password" placeholder="gsk_…" autocomplete="off" spellcheck="false" value="${esc(getKey())}"><button class="btn primary" type="submit">save key</button>${getKey() ? '<button class="btn" type="button" id="ai-keyrm">remove</button>' : ""}${showKey && !needKey() ? '<button class="btn" type="button" id="ai-keyclose">close</button>' : ""}</form>`;
+  }
+  document.addEventListener("submit", (e) => {
+    if (e.target.id !== "ai-keyform") return;
+    e.preventDefault();
+    const k = $("#ai-keyin").value.trim(); if (!k) return toast("paste a key first");
+    LS.set("nexvelo.aikey", k); showKey = false; renderKeyCard(); renderMsgs(); toast("api key saved. you can chat now.");
+  });
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#ai-keyrm")) { LS.del("nexvelo.aikey"); showKey = false; renderKeyCard(); toast("api key removed"); }
+    if (e.target.closest("#ai-keyclose")) { showKey = false; renderKeyCard(); }
+  });
+  const prettyErr = (t) => { try { const j = JSON.parse(t); return j?.error?.message || j?.message || t; } catch { return String(t); } };
+
   function renderList() {
     $("#ai-list").innerHTML = db.chats.map((c) => `<button data-id="${c.id}" class="${c.id === db.cur ? "on" : ""}" title="${esc(c.title)}">${esc(c.title)}</button>`).join("");
   }
@@ -116,8 +137,10 @@
       if (!r.ok) {
         let d = {}; try { d = await r.json(); } catch {}
         if (r.status === 404) throw new Error("the ai needs the Nex.Velo server (the Railway site), not a static host.");
-        if (d.error === "no_key" || r.status === 401) throw new Error("no api key yet. press the api key button (top right) and paste a free Groq key, or set GROQ_API_KEY on the server.");
-        throw new Error(d.error || "the ai service returned an error (" + r.status + ")");
+        if (d.error === "no_key") { showKey = true; renderKeyCard(); throw new Error("no api key yet. paste a free Groq key in the box above."); }
+        if (r.status === 401) { showKey = true; renderKeyCard(); throw new Error("Groq didn't accept that key. check it in the box above."); }
+        if (r.status === 429) throw new Error("Groq says you're sending too fast or out of free quota. wait a minute and try again.");
+        throw new Error(prettyErr(d.error || "") || "the ai service returned an error (" + r.status + ")");
       }
       const reader = r.body.getReader(), dec = new TextDecoder();
       let buf = "";
@@ -135,7 +158,10 @@
         }
       }
       if (!reply.content) reply.content = "(no response)";
-    } catch (e) { reply.content = "⚠️ " + (e.message || "something went wrong"); }
+    } catch (e) {
+      const net = e instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(e.message || "");
+      reply.content = "⚠️ " + (net ? "couldn't reach the Nex.Velo server. if this site is on Vercel, the api needs the newest files (the api folder and lib folder) deployed, or the Railway server running." : e.message || "something went wrong");
+    }
     bot.innerHTML = md(reply.content);
     busy = false; $("#ai-send").disabled = false; save();
     if (voiceOn) speak(reply.content); 
@@ -214,16 +240,12 @@
   $("#ai-new").addEventListener("click", newChat);
   $("#ai-list").addEventListener("click", (e) => { const b = e.target.closest("[data-id]"); if (b) { db.cur = b.dataset.id; save(); renderList(); renderMsgs(); } });
   $("#ai-model").addEventListener("change", (e) => { db.model = e.target.value; save(); });
-  $("#ai-key-btn").addEventListener("click", () => {
-    const note = serverKey ? "The server already has a key, so this is optional.\n\n" : "";
-    const k = prompt(note + "Paste your Groq API key. It is stored only in this browser and sent to this site's server for each message. Leave empty to remove it.", getKey());
-    if (k === null) return;
-    if (k.trim()) { LS.set("nexvelo.aikey", k.trim()); toast("api key saved"); } else { LS.del("nexvelo.aikey"); toast("api key removed"); }
-  });
+  $("#ai-key-btn").addEventListener("click", () => { showKey = !showKey; renderKeyCard(); if (showKey) setTimeout(() => $("#ai-keyin")?.focus(), 30); });
 
   async function onOpen() {
     $("#ai-model").value = db.model; renderList(); renderMsgs();
-    if (serverKey === null) { try { serverKey = (await (await fetch("/api/ai/status")).json()).serverKey; } catch { serverKey = false; } }
+    renderKeyCard();
+    if (serverKey === null) { try { serverKey = !!(await (await fetch("/api/ai/status")).json()).serverKey; } catch { serverKey = false; } renderKeyCard(); }
   }
   window.NV.onAiOpen = onOpen;
   if (document.querySelector("#views #page-ai")) onOpen();   // restored from a previous visit
