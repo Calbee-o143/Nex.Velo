@@ -31,38 +31,84 @@
   /* ---------- audio (streamed through this server so the browser never talks to YouTube/SoundCloud) ---------- */
   const audio = new Audio();
   audio.preload = "none";
+  const yt = { p: null, ready: null, on: false, tried: new Set() };
   const srcFor = (t) => window.NV.api(`/api/music/stream?source=${t.source}&id=${encodeURIComponent(t.id)}`);
-  audio.addEventListener("play", () => setPlaying(true));
-  audio.addEventListener("pause", () => { setPlaying(false); persist(true); });
-  audio.addEventListener("ended", () => next());
+  audio.addEventListener("play", () => { if (!yt.on) setPlaying(true); });
+  audio.addEventListener("pause", () => { if (yt.on) return; setPlaying(false); persist(true); });
+  audio.addEventListener("ended", () => { if (!yt.on) next(); });
   audio.addEventListener("loadedmetadata", () => {
     if (isFinite(audio.duration)) dur = audio.duration;
     if (resumeAt > 1 && resumeAt < dur) audio.currentTime = resumeAt;
     resumeAt = 0;
   });
-  audio.addEventListener("timeupdate", () => { pos = audio.currentTime || 0; if (isFinite(audio.duration)) dur = audio.duration; paintProgress(); syncLyrics(); persist(); posState(); });
-  audio.addEventListener("error", () => onFail());
+  audio.addEventListener("timeupdate", () => { if (yt.on) return; pos = audio.currentTime || 0; if (isFinite(audio.duration)) dur = audio.duration; paintProgress(); syncLyrics(); persist(); posState(); });
+  audio.addEventListener("error", () => { if (!yt.on) onFail(); });
 
   let failedOnce = new Set();
   async function onFail() {
-    if (!cur) return;
+    if (!cur || yt.on) return;
     const k = key(cur);
-    if (failedOnce.has(k)) { setPlaying(false); toast("couldn't play that: " + (await reasonFor(cur) || "the server couldn't get the audio") + ". try another."); return; }
-    failedOnce.add(k);
-    // YouTube can refuse server downloads. Try the same song on SoundCloud instead.
-    if (cur.source === "youtube") {
-      try {
-        const r = await fetch("/api/music/alt?q=" + encodeURIComponent(`${cur.artist} ${cur.title}`));
-        const d = await r.json();
-        if (d.track) {
-          const alt = { ...d.track, thumb: d.track.thumb || cur.thumb };
-          queue[qi] = alt; cur = alt; paintMini(); loadLyrics(alt); toast("youtube blocked that one, playing the soundcloud version");
-          audio.src = srcFor(alt); audio.play().catch(() => {}); return;
-        }
-      } catch {}
+    if (cur.source === "youtube" && !yt.tried.has(k)) {          // the server couldn't get the audio: play it through YouTube itself
+      yt.tried.add(k);
+      if (await startEmbed(cur)) { toast("playing it through YouTube directly"); return; }
+    }
+    if (cur.source === "youtube" && !failedOnce.has(k)) {        // last try: the same song on SoundCloud
+      failedOnce.add(k);
+      if (await scAlt()) return;
     }
     setPlaying(false); toast("couldn't play that: " + (await reasonFor(cur) || "the server couldn't get the audio") + ". try another.");
   }
+  async function scAlt() {
+    if (!cur) return false;
+    try {
+      const r = await fetch("/api/music/alt?q=" + encodeURIComponent(`${cur.artist} ${cur.title}`));
+      const d = await r.json();
+      if (d.track) {
+        const alt = { ...d.track, thumb: d.track.thumb || cur.thumb };
+        queue[qi] = alt; cur = alt; paintMini(); loadLyrics(alt); toast("that one wouldn't play, using the soundcloud version");
+        audio.src = srcFor(alt); audio.play().catch(() => {}); return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  /* ---------- YouTube's own player (hidden), used when the server can't fetch the audio ---------- */
+  let embedWait = null;
+  const ytLoad = () => (yt.ready ||= new Promise((res, rej) => {
+    if (window.YT && YT.Player) return res();
+    const to = setTimeout(() => { yt.ready = null; rej(new Error("timeout")); }, 8000);
+    window.onYouTubeIframeAPIReady = () => { clearTimeout(to); res(); };
+    const s = document.createElement("script"); s.src = "https://www.youtube.com/iframe_api";
+    s.onerror = () => { clearTimeout(to); yt.ready = null; rej(new Error("blocked")); };
+    document.head.appendChild(s);
+  }));
+  function stopEmbed() { yt.on = false; try { yt.p?.stopVideo?.(); } catch {} }
+  function ytState(e) {
+    if (!yt.on) return;
+    if (e.data === 1) { setPlaying(true); embedWait?.(true); } else if (e.data === 2) setPlaying(false); else if (e.data === 0) next();
+  }
+  function ytError() {
+    const w = embedWait; stopEmbed();
+    if (w) w(false); else scAlt().then((ok) => { if (!ok) { setPlaying(false); toast("couldn't play that track. try another."); } });
+  }
+  async function startEmbed(t) {
+    try { await ytLoad(); } catch { return false; }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { embedWait = null; stopEmbed(); resolve(false); }, 10000);
+      embedWait = (ok) => { clearTimeout(timer); embedWait = null; resolve(ok); };
+      yt.on = true;
+      try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch {}
+      if (!yt.p) yt.p = new YT.Player("yt", { width: "200", height: "200", videoId: t.id, playerVars: { autoplay: 1, playsinline: 1, controls: 0, rel: 0 }, events: { onReady: (e) => e.target.playVideo(), onStateChange: ytState, onError: ytError } });
+      else yt.p.loadVideoById(t.id);
+    });
+  }
+  setInterval(() => {
+    if (yt.on && yt.p?.getCurrentTime) {
+      pos = yt.p.getCurrentTime() || 0; const d = yt.p.getDuration?.(); if (d) dur = d;
+      paintProgress(); syncLyrics(); persist();
+    }
+  }, 500);
+
   // Ask the stream address for the real reason, so the message says what went wrong
   async function reasonFor(t) {
     try {
@@ -75,6 +121,7 @@
 
   /* ---------- playback control ---------- */
   function playAt(list, i) {
+    stopEmbed();
     const t = list[i]; if (!t) return;
     queue = list; qi = i; cur = t; pos = 0; dur = t.dur || 0; resumeAt = 0;
     audio.src = srcFor(t);
@@ -90,20 +137,21 @@
   };
   function toggle() {
     if (!cur) return;
+    if (yt.on) { playing ? yt.p.pauseVideo() : yt.p.playVideo(); return; }
     if (!audio.src) { audio.src = srcFor(cur); resumeAt = pos; }   // restored from last visit
     if (lyr.key !== key(cur)) loadLyrics(cur);
     audio.paused ? audio.play().catch(() => onFail()) : audio.pause();
   }
   function next() { if (qi < queue.length - 1) playAt(queue, qi + 1); else { setPlaying(false); } }
   function prev() { if (pos > 4) seek(0); else if (qi > 0) playAt(queue, qi - 1); else seek(0); }
-  function seek(frac) { if (!cur || !dur) return; if (!audio.src) { audio.src = srcFor(cur); } pos = frac * dur; audio.currentTime = pos; paintProgress(); }
+  function seek(frac) { if (!cur || !dur) return; if (yt.on) { pos = frac * dur; yt.p.seekTo(pos, true); paintProgress(); return; } if (!audio.src) { audio.src = srcFor(cur); } pos = frac * dur; audio.currentTime = pos; paintProgress(); }
   if ("mediaSession" in navigator) {
     const ms = navigator.mediaSession, set = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };
     set("play", () => { if (audio.paused) toggle(); }); set("pause", () => { if (!audio.paused) toggle(); });
     set("nexttrack", next); set("previoustrack", prev);
-    set("seekto", (d) => { if (d.seekTime != null) { audio.currentTime = d.seekTime; } });
-    set("seekbackward", (d) => { audio.currentTime = Math.max(0, audio.currentTime - (d.seekOffset || 10)); });
-    set("seekforward", (d) => { audio.currentTime = Math.min(dur || 1e9, audio.currentTime + (d.seekOffset || 10)); });
+    set("seekto", (d) => { if (d.seekTime != null && dur) seek(d.seekTime / dur); });
+    set("seekbackward", (d) => { if (dur) seek(Math.max(0, pos - (d.seekOffset || 10)) / dur); });
+    set("seekforward", (d) => { if (dur) seek(Math.min(dur, pos + (d.seekOffset || 10)) / dur); });
   }
   let lastPos = 0;
   function posState() {
@@ -352,7 +400,7 @@
   /* ---------- extension toggle + status chips ---------- */
   function applyMusicToggle() {
     $("#open-music").hidden = !settings.music;
-    if (!settings.music && !audio.paused) audio.pause();
+    if (!settings.music) { if (!audio.paused) audio.pause(); if (yt.on) yt.p?.pauseVideo?.(); }
     paintMini();
   }
   async function refreshMusicChips() {
