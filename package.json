@@ -18,6 +18,7 @@
   "optionalDependencies": {
     "soundcloud.ts": "latest",
     "ytmusic-api": "latest",
-    "@distube/ytdl-core": "latest"
+    "@distube/ytdl-core": "latest",
+    "@huggingface/transformers": "^3.0.0"
   }
 }
