@@ -10,7 +10,7 @@
     del: (k) => { try { localStorage.removeItem(k); } catch {} },
   };
 
-  const VERSION = "0.99.7";
+  const VERSION = "0.99.8";
   // The API (AI, music, lyrics...) lives on the Nex.Velo server. Ask this host first, then the Railway server.
   const _fetch = window.fetch.bind(window);
   let API = "";
@@ -680,7 +680,7 @@
     settings, save, esc, toast, spring, openSettings, openPage, openUrl: (u) => newTab({ url: u }), LS, defaultWisp, VERSION, api: (p) => API + p, testWisp, normalizeWisp,
     proxyFrame: async (url) => { await ready; const f = scramjet.createFrame(); f.go(url); return f.frame; },
     setWisp: async (url) => { settings.wisp = url; activeWisp = url; save(); $("#wisp-url").value = url; await applyTransport(); },
-    activeWisp: () => activeWisp, loaded: {},
+    activeWisp: () => activeWisp, loaded: {}, rawFetch: _fetch, apiBase: () => API || location.origin,
   };
   applyTheme(); applyWall();
   $("#ver").textContent = "v" + VERSION;
