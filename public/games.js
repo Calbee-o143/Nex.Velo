@@ -13,7 +13,22 @@
   const lists = {};
   let list = [], shown = 0, current = null;
 
-  const msg = (t) => { $("#gmsg").textContent = t || ""; };
+  // a message, with an optional button that tests every game source on the server and shows exactly what fails and why
+  const msg = (t, check) => {
+    const el = $("#gmsg"); el.style.whiteSpace = ""; el.textContent = t || "";
+    if (!check) return;
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn"; b.textContent = "run full check"; b.style.marginLeft = ".5rem";
+    b.addEventListener("click", runCheck); el.appendChild(b);
+  };
+  async function runCheck() {
+    const el = $("#gmsg"); el.style.whiteSpace = "pre-wrap"; el.textContent = "checking every game source… this can take up to a minute";
+    try {
+      const d = await (await fetch(abs("/api/diag"))).json();
+      const keys = ["gnMath", "gnFile", "cherri", "cherriFile", "obsidian", "obsidianFile", "duckmath", "weslack"];
+      el.textContent = keys.filter((k) => d.checks[k]).map((k) => { const v = d.checks[k]; return `${v.ok ? "✓" : "✗"} ${k} (${v.ms} ms) ${v.ok ? v.info : v.error}`; }).join("\n");
+    } catch { el.textContent = "couldn't reach /api/diag. the server may be on an older version. redeploy the newest lib/api.js."; }
+  }
   // always a full address, so it works the same whether the page and the server share a host or not
   const abs = (p) => new URL(/^https?:/i.test(p) ? p : apiBase() + p, location.href).href;
 
@@ -35,7 +50,7 @@
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.games?.length) throw new Error(d.error || "the server answered " + r.status);
       return (lists[key] = d.games);
-    } catch (e) { msg("couldn't load the " + (LABEL[key] || key) + " games. " + (e.message || e)); return null; }
+    } catch (e) { msg("couldn't load the " + (LABEL[key] || key) + " games. " + (e.message || e), true); return null; }
   }
 
   async function showSource(key) {
