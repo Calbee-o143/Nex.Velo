@@ -426,9 +426,9 @@
   // Tests every outside service the server relies on (music, games, the AI model) and shows what works and what fails, with the reason.
   document.addEventListener("click", async (e) => {
     if (!e.target.closest("#music-diag")) return;
-    const out = $("#music-diag-out"); out.hidden = false; out.textContent = "checking… this can take up to 30 seconds";
+    const out = $("#music-diag-out"); out.hidden = false; out.textContent = "checking… this can take a few minutes (it also tries to start Nex.AI, which downloads its model the first time)";
     try {
-      const d = await (await fetch(api("/api/diag"))).json();
+      const d = await (await fetch(api("/api/diag?load=1"))).json();
       out.textContent = [
         `server: node ${d.node}, memory in use ${d.rssMB} MB, enough memory for Nex.AI: ${d.enoughMemoryForModel ? "yes" : "NO"}`,
         `nex.ai: ${d.nexAi.ready ? "ready" : d.nexAi.loading ? "loading " + d.nexAi.progress : "not loaded"} (${d.nexAi.model})${d.nexAi.error ? " · " + d.nexAi.error : ""}`, "",
