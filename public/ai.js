@@ -1,18 +1,25 @@
 /* Nex.AI: chat in its own tab with file uploads, screen sharing and voice chat.
-   Talks to /api/ai/chat and /api/ai/transcribe (Groq). Chat text stays in this browser. */
+   Always talks to Nex.AI, the model that runs on the Nex.Velo server (/api/ai/chat). No keys, no provider choice. Chat text stays in this browser. */
 (() => {
   "use strict";
   const { esc, toast, LS } = window.NV;
   const $ = (s, r = document) => r.querySelector(s);
-  const SYSTEM = "You are Nex.AI, a friendly, concise assistant built into the Nex.Velo web proxy. Use plain language and short answers unless asked for detail. If the user shares their screen or an image, describe and help with what you see.";
+  const api = (p) => window.NV.api(p);
+
+  const SYSTEM = "You are Nex.AI, a friendly, concise assistant built into the Nex.Velo web proxy. Use plain language and short answers unless asked for detail. If the user shares an image, describe and help with what you see.";
   const TEXT_EXT = /\.(txt|md|csv|json|js|ts|py|html|css|java|c|cpp|go|rs|sh|log|xml|ya?ml)$/i;
-  let db = { cur: null, model: "openai/gpt-oss-20b", chats: [] };
-  try { db = { ...db, ...JSON.parse(LS.get("nexvelo.ai", "{}")) }; } catch {}
-  let busy = false, serverKey = null, attachments = [], share = null, voiceOn = false, listening = null, showKey = false;
-  const save = () => LS.set("nexvelo.ai", JSON.stringify(db));
+  const QUIET_MS = 90000; // if the server says nothing at all for this long, stop waiting
+
+  let db = { cur: null, chats: [] };
+  try { const old = JSON.parse(LS.get("nexvelo.ai", "{}")); db = { cur: old.cur || null, chats: old.chats || [] }; } catch {}
+  let busy = false, vision = false, attachments = [], share = null, voiceOn = false, listening = null;
+
+  const save = () => LS.set("nexvelo.ai", JSON.stringify({ cur: db.cur, chats: db.chats }));
   const chat = () => db.chats.find((c) => c.id === db.cur);
-  const getKey = () => LS.get("nexvelo.aikey", "");
-  const authHeaders = (h = {}) => (getKey() ? { ...h, "x-groq-key": getKey() } : h);
+
+  // Nex.AI is the only AI, so the old key box and model picker are hidden
+  for (const sel of ["#ai-key-btn", "#ai-key-card"]) { const el = $(sel); if (el) { el.hidden = true; el.style.display = "none"; } }
+  { const m = $("#ai-model"); if (m) { m.style.display = "none"; if (m.parentElement?.tagName === "LABEL") m.parentElement.style.display = "none"; } }
 
   /* ---------- rendering ---------- */
   function md(t) {
@@ -21,25 +28,6 @@
       return esc(p).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
     }).join("");
   }
-  const needKey = () => !getKey() && serverKey !== true;
-  function renderKeyCard() {
-    const box = $("#ai-key-card"); if (!box) return;
-    const show = needKey() || showKey;
-    box.hidden = !show; if (!show) return;
-    box.innerHTML = `<b>${getKey() ? "your Groq api key" : "one quick step"}</b>
-      <p>nex.ai runs on Groq. get a free key at <u>console.groq.com/keys</u>, paste it here and you're set. it stays in this browser and is only sent with your messages.</p>
-      <form id="ai-keyform" onsubmit="return false"><input id="ai-keyin" type="password" placeholder="gsk_…" autocomplete="off" spellcheck="false" value="${esc(getKey())}"><button class="btn primary" type="submit">save key</button>${getKey() ? '<button class="btn" type="button" id="ai-keyrm">remove</button>' : ""}${showKey && !needKey() ? '<button class="btn" type="button" id="ai-keyclose">close</button>' : ""}</form>`;
-  }
-  document.addEventListener("submit", (e) => {
-    if (e.target.id !== "ai-keyform") return;
-    e.preventDefault();
-    const k = $("#ai-keyin").value.trim(); if (!k) return toast("paste a key first");
-    LS.set("nexvelo.aikey", k); showKey = false; renderKeyCard(); renderMsgs(); toast("api key saved. you can chat now.");
-  });
-  document.addEventListener("click", (e) => {
-    if (e.target.closest("#ai-keyrm")) { LS.del("nexvelo.aikey"); showKey = false; renderKeyCard(); toast("api key removed"); }
-    if (e.target.closest("#ai-keyclose")) { showKey = false; renderKeyCard(); }
-  });
   const prettyErr = (t) => { try { const j = JSON.parse(t); return j?.error?.message || j?.message || t; } catch { return String(t); } };
 
   function renderList() {
@@ -48,7 +36,7 @@
   function renderMsgs() {
     const c = chat(), box = $("#ai-msgs");
     if (!c || !c.msgs.length) {
-      box.innerHTML = '<div class="aiempty"><b style="display:block;font-size:1.125rem;margin-bottom:.5rem;color:var(--fg)">nex.ai</b>ask me anything. attach files or images, share your screen, or press the mic to talk.</div>';
+      box.innerHTML = '<div class="aiempty"><b style="display:block;font-size:1.125rem;margin-bottom:.5rem;color:var(--fg)">nex.ai</b>ask me anything. attach text files, or press the mic to talk.</div>';
       return;
     }
     box.innerHTML = c.msgs.map((m) => `<div class="aimsg ${m.role === "user" ? "user" : "bot"}">${m.role === "user" ? esc(m.content) : md(m.content)}</div>`).join("");
@@ -60,7 +48,7 @@
   }
 
   /* ---------- attachments + screen share ---------- */
-  function shrink(src, max, q) {   // src: HTMLImageElement or HTMLVideoElement
+  function shrink(src, max, q) { // src: HTMLImageElement or HTMLVideoElement
     const w = src.videoWidth || src.naturalWidth, h = src.videoHeight || src.naturalHeight;
     const k = Math.min(1, max / Math.max(w, h));
     const c = document.createElement("canvas"); c.width = Math.round(w * k); c.height = Math.round(h * k);
@@ -94,7 +82,7 @@
       const v = $("#ai-share-v"); v.srcObject = stream; v.hidden = false; await v.play();
       share = { stream }; $("#ai-screen").classList.add("on");
       stream.getVideoTracks()[0].addEventListener("ended", stopShare);
-      toast("sharing your screen. each message includes what is on it right now.");
+      toast(vision ? "sharing your screen. each message includes what is on it right now." : "sharing your screen, but nex.ai can't see images yet, so only your text is sent.");
     } catch { toast("screen share was cancelled"); }
   }
   function stopShare() {
@@ -107,19 +95,26 @@
   async function send(text, spoken) {
     text = (text || "").trim();
     if (busy || (!text && !attachments.length)) return;
-    if (!chat()) newChat();
-    const c = chat();
+
     // what the model sees
     let body = text;
     for (const a of attachments.filter((x) => x.type === "text")) body += `\n\n[file: ${a.name}]\n\`\`\`\n${a.data}\n\`\`\``;
-    const images = attachments.filter((x) => x.type === "image").map((a) => a.data);
+    let images = attachments.filter((x) => x.type === "image").map((a) => a.data);
     let screenNote = "";
     if (share) {
       try { images.push(shrink($("#ai-share-v"), 1280, .7)); screenNote = "🖥 screen shared"; } catch {}
     }
+    if (images.length && !vision) { // the built-in model reads text only
+      toast("nex.ai can't see images or your screen yet, so I'm sending only your text.");
+      images = []; screenNote = "";
+      if (!body.trim()) return;
+    }
+    if (!chat()) newChat();
+    const c = chat();
     const content = images.length
       ? [{ type: "text", text: body || "What do you see?" }, ...images.map((u) => ({ type: "image_url", image_url: { url: u } }))]
       : body;
+
     // what we keep (no images, to stay inside the browser's storage)
     const shown = [text, attachments.length ? "📎 " + attachments.map((a) => a.name).join(", ") : "", screenNote].filter(Boolean).join("\n");
     const history = c.msgs.map((m) => ({ role: m.role, content: m.content }));
@@ -127,32 +122,39 @@
     if (c.title === "new chat") c.title = (text || attachments[0]?.name || "chat").slice(0, 40);
     const reply = { role: "assistant", content: "" };
     c.msgs.push(reply); attachments = []; renderAtt(); save(); renderList(); renderMsgs();
+
     busy = true; $("#ai-send").disabled = true;
     const bot = $("#ai-msgs").lastElementChild;
+    bot.innerHTML = '<span style="opacity:.6">thinking…</span>';
+    const ctl = new AbortController();
+    let dog = setTimeout(() => ctl.abort(), QUIET_MS);
+    const poke = () => { clearTimeout(dog); dog = setTimeout(() => ctl.abort(), QUIET_MS); };
     try {
-      const r = await fetch("/api/ai/chat", {
-        method: "POST", headers: authHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ model: db.model, messages: [{ role: "system", content: SYSTEM }, ...history, { role: "user", content }] }),
+      const r = await fetch(api("/api/ai/chat"), {
+        method: "POST", headers: { "content-type": "application/json" }, signal: ctl.signal,
+        body: JSON.stringify({ model: "local", messages: [{ role: "system", content: SYSTEM }, ...history, { role: "user", content }] }),
       });
       if (!r.ok) {
         let d = {}; try { d = await r.json(); } catch {}
         if (r.status === 404) throw new Error("the ai needs the Nex.Velo server (the Railway site), not a static host.");
-        if (d.error === "no_key") { showKey = true; renderKeyCard(); throw new Error("no api key yet. paste a free Groq key in the box above."); }
-        if (r.status === 401) { showKey = true; renderKeyCard(); throw new Error("Groq didn't accept that key. check it in the box above."); }
-        if (r.status === 429) throw new Error("Groq says you're sending too fast or out of free quota. wait a minute and try again.");
-        throw new Error(prettyErr(d.error || "") || "the ai service returned an error (" + r.status + ")");
+        if (d.error === "vision_unavailable") throw new Error("nex.ai can't look at images or screens yet. ask again with just text.");
+        throw new Error(prettyErr(d.error || "") || "nex.ai returned an error (" + r.status + ")");
       }
+      poke();
       const reader = r.body.getReader(), dec = new TextDecoder();
       let buf = "";
       for (;;) {
         const { done, value } = await reader.read(); if (done) break;
+        poke();
         buf += dec.decode(value, { stream: true });
         const lines = buf.split("\n"); buf = lines.pop();
         for (const line of lines) {
           if (!line.startsWith("data:")) continue;
           const data = line.slice(5).trim(); if (data === "[DONE]") continue;
           try {
-            const delta = JSON.parse(data).choices?.[0]?.delta?.content;
+            const j = JSON.parse(data);
+            if (j.status && !reply.content) bot.innerHTML = `<span style="opacity:.6">${esc(j.status)}</span>`;
+            const delta = j.choices?.[0]?.delta?.content;
             if (delta) { reply.content += delta; bot.innerHTML = md(reply.content); $("#ai-msgs").scrollTop = $("#ai-msgs").scrollHeight; }
           } catch {}
         }
@@ -160,63 +162,53 @@
       if (!reply.content) reply.content = "(no response)";
     } catch (e) {
       const net = e instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(e.message || "");
-      reply.content = "⚠️ " + (net ? "couldn't reach the Nex.Velo server. if this site is on Vercel, the api needs the newest files (the api folder and lib folder) deployed, or the Railway server running." : e.message || "something went wrong");
+      const msg = e.name === "AbortError" ? "nex.ai stopped answering (the server may be restarting). wait a moment and try again."
+        : net ? "couldn't reach the Nex.Velo server. if this site is on Vercel, the api needs the newest files (the api folder and lib folder) deployed, or the Railway server running."
+        : e.message || "something went wrong";
+      reply.content = (reply.content ? reply.content + "\n\n" : "") + "⚠️ " + msg;
     }
+    clearTimeout(dog);
     bot.innerHTML = md(reply.content);
     busy = false; $("#ai-send").disabled = false; save();
-    if (voiceOn) speak(reply.content); 
+    if (voiceOn) speak(reply.content);
   }
 
-  /* ---------- voice chat: record, transcribe on the server, speak the reply ---------- */
+  /* ---------- voice chat: the browser's speech recognition listens, Nex.AI answers, the browser speaks the reply ---------- */
   function speak(text) {
     const plain = text.replace(/```[\s\S]*?```/g, " (code omitted) ").replace(/[*`#_]/g, "").slice(0, 1200);
-    if (!("speechSynthesis" in window) || text.startsWith("⚠️")) { if (voiceOn) listen(); return; }
+    if (!("speechSynthesis" in window) || text.startsWith("⚠️")) { if (voiceOn) setTimeout(listen, 400); return; }
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(plain);
     u.onend = () => { if (voiceOn) listen(); };
     u.onerror = () => { if (voiceOn) listen(); };
     speechSynthesis.speak(u);
   }
-  async function listen() {
+  function listen() {
     if (!voiceOn || busy || listening) return;
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { toast("voice chat isn't supported on this browser"); return stopVoice(); }
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { toast("microphone access was blocked"); return stopVoice(); }
-    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "";
-    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-    const chunks = []; let skip = false;
-    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const an = ctx.createAnalyser(); an.fftSize = 1024; ctx.createMediaStreamSource(stream).connect(an);
-    const buf = new Uint8Array(an.fftSize);
-    let started = false, lastLoud = Date.now(); const t0 = Date.now();
-    const timer = setInterval(() => {
-      an.getByteTimeDomainData(buf);
-      let sum = 0; for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
-      const now = Date.now();
-      if (Math.sqrt(sum / buf.length) > 0.03) { started = true; lastLoud = now; }
-      if (started && now - lastLoud > 1300) rec.stop();                 // finished talking
-      else if (!started && now - t0 > 12000) { skip = true; rec.stop(); } // nobody spoke, try again
-      else if (now - t0 > 45000) rec.stop();
-    }, 100);
-    listening = { rec, stop: () => { skip = true; try { rec.stop(); } catch {} } };
-    $("#ai-voice").classList.add("on"); $("#ai-in").placeholder = "listening…";
-    rec.onstop = async () => {
-      clearInterval(timer); stream.getTracks().forEach((t) => t.stop()); ctx.close().catch(() => {}); listening = null;
-      $("#ai-in").placeholder = "ask anything";
-      if (!voiceOn) return;
-      if (skip) return listen();
-      $("#ai-in").placeholder = "transcribing…";
-      try {
-        const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
-        const r = await fetch("/api/ai/transcribe", { method: "POST", headers: authHeaders({ "content-type": blob.type }), body: blob });
-        const d = await r.json().catch(() => ({}));
-        $("#ai-in").placeholder = "ask anything";
-        if (!r.ok) { toast(d.error === "no_key" ? "voice chat needs a Groq api key (see the api key button)" : d.error || "couldn't hear that"); return stopVoice(); }
-        if (d.text) send(d.text, true); else listen();
-      } catch { $("#ai-in").placeholder = "ask anything"; toast("couldn't reach the server for voice"); stopVoice(); }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { toast("voice chat needs Chrome, Edge or Safari (this browser has no speech recognition)"); return stopVoice(); }
+    const rec = new SR();
+    rec.lang = navigator.language || "en-US"; rec.interimResults = true; rec.continuous = false;
+    let heard = "", fatal = false;
+    rec.onresult = (e) => {
+      let final = "", interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) (e.results[i].isFinal ? (final += e.results[i][0].transcript) : (interim += e.results[i][0].transcript));
+      if (final) heard = (heard + " " + final).trim();
+      $("#ai-in").placeholder = (heard + " " + interim).trim() || "listening…";
     };
-    rec.start();
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") { fatal = true; toast("microphone access was blocked"); }
+      else if (e.error === "network") { fatal = true; toast("speech recognition couldn't reach its service (the browser uses Google for it)"); }
+    };
+    rec.onend = () => {
+      listening = null; $("#ai-in").placeholder = "ask anything";
+      if (fatal) return stopVoice();
+      if (!voiceOn) return;
+      if (heard) send(heard, true); else setTimeout(listen, 300); // nobody spoke: listen again
+    };
+    listening = { stop: () => { try { rec.abort(); } catch {} } };
+    $("#ai-voice").classList.add("on"); $("#ai-in").placeholder = "listening…";
+    try { rec.start(); } catch { listening = null; stopVoice(); }
   }
   function toggleVoice() { voiceOn ? stopVoice() : (voiceOn = true, $("#ai-voice").classList.add("on"), listen()); }
   function stopVoice() {
@@ -239,15 +231,13 @@
   $("#ai-voice").addEventListener("click", toggleVoice);
   $("#ai-new").addEventListener("click", newChat);
   $("#ai-list").addEventListener("click", (e) => { const b = e.target.closest("[data-id]"); if (b) { db.cur = b.dataset.id; save(); renderList(); renderMsgs(); } });
-  $("#ai-model").addEventListener("change", (e) => { db.model = e.target.value; save(); });
-  $("#ai-key-btn").addEventListener("click", () => { showKey = !showKey; renderKeyCard(); if (showKey) setTimeout(() => $("#ai-keyin")?.focus(), 30); });
 
   async function onOpen() {
-    $("#ai-model").value = db.model; renderList(); renderMsgs();
-    renderKeyCard();
-    if (serverKey === null) { try { serverKey = !!(await (await fetch("/api/ai/status")).json()).serverKey; } catch { serverKey = false; } renderKeyCard(); }
+    renderList(); renderMsgs();
+    // also tells the server to start loading Nex.AI right now, so the first answer is quicker
+    try { const s = await (await fetch(api("/api/ai/status?wake=1"))).json(); vision = !!s.vision; } catch { vision = false; }
   }
   window.NV.onAiOpen = onOpen;
-  if (document.querySelector("#views #page-ai")) onOpen();   // restored from a previous visit
+  if (document.querySelector("#views #page-ai")) onOpen(); // restored from a previous visit
   window.NV.loaded.ai = true;
 })();
