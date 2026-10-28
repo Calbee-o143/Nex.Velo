@@ -6,6 +6,8 @@
   const $ = (s, r = document) => r.querySelector(s);
   const PAGE = 60;
   const SOURCES = ["cherri", "gn", "obsidian", "duckmath", "weslack"];
+  // These two are opened as whole websites through the proxy (no game list to read)
+  const PROXIED = { duckmath: "https://duckmath.org/", weslack: "https://weslack.com/" };
   const LABEL = { cherri: "Cherri", gn: "GN Math", obsidian: "Obsidian", duckmath: "DuckMath", weslack: "Weslack" };
 
   let src = (() => { try { return JSON.parse(LS.get("nexvelo.games", "{}")).src; } catch { return null; } })();
@@ -25,7 +27,7 @@
     const el = $("#gmsg"); el.style.whiteSpace = "pre-wrap"; el.textContent = "checking every game source… this can take up to a minute";
     try {
       const d = await (await fetch(abs("/api/diag"))).json();
-      const keys = ["gnMath", "gnFile", "cherri", "cherriFile", "obsidian", "obsidianFile", "duckmath", "weslack"];
+      const keys = ["gnMath", "gnFile", "cherri", "cherriFile", "obsidian", "obsidianFile"];
       el.textContent = keys.filter((k) => d.checks[k]).map((k) => { const v = d.checks[k]; return `${v.ok ? "✓" : "✗"} ${k} (${v.ms} ms) ${v.ok ? v.info : v.error}`; }).join("\n");
     } catch { el.textContent = "couldn't reach /api/diag. the server may be on an older version. redeploy the newest lib/api.js."; }
   }
@@ -53,10 +55,18 @@
     } catch (e) { msg("couldn't load the " + (LABEL[key] || key) + " games. " + (e.message || e), true); return null; }
   }
 
-  async function showSource(key) {
+  async function showSource(key, auto) {
     src = key; LS.set("nexvelo.games", JSON.stringify({ src }));
     document.querySelectorAll("#gtabs button").forEach((b) => b.classList.toggle("on", b.dataset.g === key));
     $("#ggrid").innerHTML = ""; $("#gcount").textContent = ""; $("#gmore").hidden = true;
+    if (PROXIED[key]) { // a whole website, opened through the proxy
+      const el = $("#gmsg"); el.style.whiteSpace = ""; el.textContent = LABEL[key] + " opens as its own website through the proxy. ";
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "btn"; b.textContent = "open " + LABEL[key]; b.addEventListener("click", () => play({ name: LABEL[key], site: PROXIED[key] }));
+      el.appendChild(b);
+      if (auto) play({ name: LABEL[key], site: PROXIED[key] });
+      return;
+    }
     const games = await load(key);
     if (src !== key || !games) return;
     msg(""); filter();
@@ -86,7 +96,8 @@
     $("#g-browse").hidden = true; $("#g-view").hidden = false;
     $("#g-title").textContent = g.name; $("#gplay").innerHTML = ""; $("#gvmsg").textContent = "opening " + g.name + "…";
     let target = null, isolated = true;
-    if (g.play) target = abs(g.play);
+    if (g.site) target = g.site;
+    else if (g.play) target = abs(g.play);
     else if (g.url && /^https?:/i.test(g.url) && src !== "duckmath" && src !== "weslack") { target = g.url; isolated = false; } // a plain link: open it through the proxy
     else if (g.url && /^https?:/i.test(g.url)) {
       try {
@@ -106,14 +117,32 @@
       } else el = await proxyFrame(target);
       el.addEventListener("load", () => { $("#gvmsg").textContent = ""; });
       $("#gplay").appendChild(el);
+      if (g.play) watchBlank(el, g);
       setTimeout(() => { $("#gvmsg").textContent = ""; }, 12000);
       if (!isolated) toast("couldn't isolate the game, showing its page");
     } catch (e) { $("#gvmsg").textContent = "couldn't start the proxy: " + (e.message || e); }
   }
 
+  // Game pages served by this server report their own errors. If a game opens but stays blank, show what it reported.
+  let reports = [];
+  window.addEventListener("message", (e) => {
+    if (typeof e.data?.nvGame === "string" && current) { reports.push(e.data.nvGame); if (reports.length > 6) reports.shift(); }
+  });
+  function watchBlank(el, g) {
+    reports = [];
+    setTimeout(() => {
+      if (current !== g) return;
+      try {
+        const d = el.contentDocument;
+        if (d && d.body && !d.body.innerText.trim() && !d.querySelector("canvas, iframe, video, img, svg"))
+          $("#gvmsg").textContent = "this game opened but looks blank. the page reported: " + (reports.join(" | ") || "nothing (it may still be loading)");
+      } catch {}
+    }, 8000);
+  }
+
   function back() { $("#gplay").innerHTML = ""; $("#g-view").hidden = true; $("#g-browse").hidden = false; current = null; }
 
-  $("#gtabs").addEventListener("click", (e) => { const b = e.target.closest("[data-g]"); if (b) { back(); showSource(b.dataset.g); } });
+  $("#gtabs").addEventListener("click", (e) => { const b = e.target.closest("[data-g]"); if (b) { back(); showSource(b.dataset.g, true); } });
   $("#gq").addEventListener("input", filter);
   $("#gmore").addEventListener("click", more);
   $("#ggrid").addEventListener("click", (e) => { const c = e.target.closest(".gcard"); if (c) play(list[+c.dataset.i]); });
