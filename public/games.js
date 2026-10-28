@@ -87,7 +87,8 @@
     $("#g-title").textContent = g.name; $("#gplay").innerHTML = ""; $("#gvmsg").textContent = "opening " + g.name + "…";
     let target = null, isolated = true;
     if (g.play) target = abs(g.play);
-    else if (g.url && /^https?:/i.test(g.url) && !lists[src]?.some?.((x) => x === g && x.site)) {
+    else if (g.url && /^https?:/i.test(g.url) && src !== "duckmath" && src !== "weslack") { target = g.url; isolated = false; } // a plain link: open it through the proxy
+    else if (g.url && /^https?:/i.test(g.url)) {
       try {
         const d = await (await fetch(abs(`/api/games/open?site=${src}&url=${encodeURIComponent(g.url)}`))).json();
         if (d.embed) target = d.embed; else { target = g.url; isolated = false; }
