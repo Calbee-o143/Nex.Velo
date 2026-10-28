@@ -14,7 +14,8 @@
   let list = [], shown = 0, current = null;
 
   const msg = (t) => { $("#gmsg").textContent = t || ""; };
-  const abs = (p) => (/^https?:/i.test(p) ? p : apiBase() + p);
+  // always a full address, so it works the same whether the page and the server share a host or not
+  const abs = (p) => new URL(/^https?:/i.test(p) ? p : apiBase() + p, location.href).href;
 
   // the Obsidian tab is added here, so the page's HTML doesn't need to change
   (() => {
@@ -80,7 +81,13 @@
     if (!target) { $("#gvmsg").textContent = "couldn't find that game's address."; return; }
     g._target = target;
     try {
-      const el = await proxyFrame(target);
+      let el;
+      if (g.play) {
+        // Library games are files on the Nex.Velo server itself, so they open directly. The proxy would only add rewriting that breaks games.
+        el = document.createElement("iframe");
+        el.src = target; el.allow = "fullscreen; autoplay; gamepad; clipboard-write; accelerometer; gyroscope";
+        el.setAttribute("allowfullscreen", ""); el.style.cssText = "width:100%;height:100%;border:0;background:#000";
+      } else el = await proxyFrame(target);
       el.addEventListener("load", () => { $("#gvmsg").textContent = ""; });
       $("#gplay").appendChild(el);
       setTimeout(() => { $("#gvmsg").textContent = ""; }, 12000);
