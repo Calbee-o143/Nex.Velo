@@ -421,7 +421,21 @@
       const s = (await r.json()).status;
       box.innerHTML = `<span class="chip ${s.youtube ? "ok" : ""}">youtube music: ${s.youtube ? "connected" : "unavailable"}</span><span class="chip ${s.soundcloud ? "ok" : ""}">soundcloud: ${s.soundcloud ? "connected" : "unavailable"}</span><span class="chip ${s.audius ? "ok" : ""}">audius: ${s.audius ? "connected" : "not used yet"}</span>`;
     } catch { box.innerHTML = '<span class="chip">music server not reachable</span>'; }
+    box.insertAdjacentHTML("beforeend", '<button class="btn" type="button" id="music-diag" style="margin-top:.5rem">run full check</button><pre id="music-diag-out" style="white-space:pre-wrap;font-size:.75rem;margin-top:.5rem" hidden></pre>');
   }
+  // Tests every outside service the server relies on (music, games, the AI model) and shows what works and what fails, with the reason.
+  document.addEventListener("click", async (e) => {
+    if (!e.target.closest("#music-diag")) return;
+    const out = $("#music-diag-out"); out.hidden = false; out.textContent = "checking… this can take up to 30 seconds";
+    try {
+      const d = await (await fetch(api("/api/diag"))).json();
+      out.textContent = [
+        `server: node ${d.node}, memory in use ${d.rssMB} MB, enough memory for Nex.AI: ${d.enoughMemoryForModel ? "yes" : "NO"}`,
+        `nex.ai: ${d.nexAi.ready ? "ready" : d.nexAi.loading ? "loading " + d.nexAi.progress : "not loaded"} (${d.nexAi.model})${d.nexAi.error ? " · " + d.nexAi.error : ""}`, "",
+        ...Object.entries(d.checks).map(([k, v]) => `${v.ok ? "✓" : "✗"} ${k} (${v.ms} ms) ${v.ok ? v.info : v.error}`),
+      ].join("\n");
+    } catch { out.textContent = "couldn't reach /api/diag. the server may be on an older version. redeploy the newest lib/api.js."; }
+  });
 
   window.NV.onTab = (t) => {
     musicTab = t.kind === "music"; paintMini();
