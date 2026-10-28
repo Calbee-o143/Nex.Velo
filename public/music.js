@@ -1,4 +1,4 @@
-/* Music: search YouTube Music + SoundCloud, play through the Nex.Velo server, lyrics, playlists, recently played. */
+/* Music: search YouTube Music + SoundCloud + Audius, play through the Nex.Velo server, lyrics, playlists, recently played. */
 (() => {
   "use strict";
   const { settings, esc, toast, LS } = window.NV;
@@ -8,18 +8,20 @@
   const store = (k, v) => LS.set(k, JSON.stringify(v));
   const key = (t) => t.source + ":" + t.id;
   const fmt = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "");
-  const srcName = (s) => (s === "youtube" ? "youtube music" : "soundcloud");
+  const srcName = (s) => (s === "youtube" ? "youtube music" : s === "audius" ? "audius" : "soundcloud");
+  // every request goes through NV.api, so it reaches the Nex.Velo server even when the page is opened from another host
+  const api = (p) => window.NV.api(p);
   const ICON = {
     play: '<svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>',
     pause: '<svg viewBox="0 0 24 24"><path d="M7 5v14M17 5v14"/></svg>',
   };
 
-  let playlists = load("nexvelo.playlists", []);   // [{id, name, tracks: []}]
-  let recent = load("nexvelo.recent", []);         // [track]
+  let playlists = load("nexvelo.playlists", []); // [{id, name, tracks: []}]
+  let recent = load("nexvelo.recent", []); // [track]
   let results = [], lastStatus = null, openPl = null, musicTab = false;
 
   /* ---------- saved player state ---------- */
-  const saved = load("nexvelo.music", {});          // {collapsed, cur, queue, qi, pos}
+  const saved = load("nexvelo.music", {}); // {collapsed, cur, queue, qi, pos}
   let collapsed = !!saved.collapsed;
   let cur = saved.cur || null, queue = saved.queue || [], qi = saved.qi ?? -1, playing = false, pos = saved.pos || 0, dur = saved.cur?.dur || 0;
   let resumeAt = pos, lastSave = 0;
@@ -32,7 +34,9 @@
   const audio = new Audio();
   audio.preload = "none";
   const yt = { p: null, ready: null, on: false, tried: new Set() };
-  const srcFor = (t) => window.NV.api(`/api/music/stream?source=${t.source}&id=${encodeURIComponent(t.id)}`);
+  // the song's artist + title go along so the server can fall back to the same song on another source by itself
+  const srcFor = (t) => api(`/api/music/stream?source=${t.source}&id=${encodeURIComponent(t.id)}&q=${encodeURIComponent(`${t.artist || ""} ${t.title || ""}`.trim())}`);
+
   audio.addEventListener("play", () => { if (!yt.on) setPlaying(true); });
   audio.addEventListener("pause", () => { if (yt.on) return; setPlaying(false); persist(true); });
   audio.addEventListener("ended", () => { if (!yt.on) next(); });
@@ -48,25 +52,27 @@
   async function onFail() {
     if (!cur || yt.on) return;
     const k = key(cur);
-    if (cur.source === "youtube" && !yt.tried.has(k)) {          // the server couldn't get the audio: play it through YouTube itself
-      yt.tried.add(k);
-      if (await startEmbed(cur)) { toast("playing it through YouTube directly"); return; }
-    }
-    if (cur.source === "youtube" && !failedOnce.has(k)) {        // last try: the same song on SoundCloud
+    // the server has already tried every source it knows. what's left: another SoundCloud match, then YouTube's own player
+    if (cur.source === "youtube" && !failedOnce.has(k)) {
       failedOnce.add(k);
       if (await scAlt()) return;
     }
+    if (cur.source === "youtube" && !yt.tried.has(k)) {
+      yt.tried.add(k);
+      if (await startEmbed(cur)) { toast("playing it through YouTube directly"); return; }
+    }
     setPlaying(false); toast("couldn't play that: " + (await reasonFor(cur) || "the server couldn't get the audio") + ". try another.");
   }
+
   async function scAlt() {
     if (!cur) return false;
     try {
-      const r = await fetch("/api/music/alt?q=" + encodeURIComponent(`${cur.artist} ${cur.title}`));
+      const r = await fetch(api("/api/music/alt?q=" + encodeURIComponent(`${cur.artist} ${cur.title}`)));
       const d = await r.json();
       if (d.track) {
         const alt = { ...d.track, thumb: d.track.thumb || cur.thumb };
         queue[qi] = alt; cur = alt; paintMini(); loadLyrics(alt); toast("that one wouldn't play, using the soundcloud version");
-        audio.src = srcFor(alt); audio.play().catch(() => {}); return true;
+        audio.src = srcFor(alt); audio.play().catch((e) => { if (e?.name !== "AbortError") setPlaying(false); }); return true;
       }
     } catch {}
     return false;
@@ -89,7 +95,7 @@
   }
   function ytError() {
     const w = embedWait; stopEmbed();
-    if (w) w(false); else scAlt().then((ok) => { if (!ok) { setPlaying(false); toast("couldn't play that track. try another."); } });
+    if (w) w(false); else { setPlaying(false); toast("couldn't play that track. try another."); }
   }
   async function startEmbed(t) {
     try { await ytLoad(); } catch { return false; }
@@ -120,12 +126,14 @@
   }
 
   /* ---------- playback control ---------- */
+  const playFail = (e) => { if (e?.name !== "AbortError") onFail(); }; // a quick skip aborts the old request. that isn't a failure
+
   function playAt(list, i) {
     stopEmbed();
     const t = list[i]; if (!t) return;
     queue = list; qi = i; cur = t; pos = 0; dur = t.dur || 0; resumeAt = 0;
     audio.src = srcFor(t);
-    audio.play().catch(() => onFail());
+    audio.play().catch(playFail);
     addRecent(t); paintMini(); markNow(); persist(true); loadLyrics(t);
     if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, album: srcName(t.source), artwork: t.thumb ? [{ src: t.thumb, sizes: "300x300" }, { src: t.thumb, sizes: "512x512" }] : [] });
   }
@@ -138,13 +146,14 @@
   function toggle() {
     if (!cur) return;
     if (yt.on) { playing ? yt.p.pauseVideo() : yt.p.playVideo(); return; }
-    if (!audio.src) { audio.src = srcFor(cur); resumeAt = pos; }   // restored from last visit
+    if (!audio.src) { audio.src = srcFor(cur); resumeAt = pos; } // restored from last visit
     if (lyr.key !== key(cur)) loadLyrics(cur);
-    audio.paused ? audio.play().catch(() => onFail()) : audio.pause();
+    audio.paused ? audio.play().catch(playFail) : audio.pause();
   }
   function next() { if (qi < queue.length - 1) playAt(queue, qi + 1); else { setPlaying(false); } }
   function prev() { if (pos > 4) seek(0); else if (qi > 0) playAt(queue, qi - 1); else seek(0); }
   function seek(frac) { if (!cur || !dur) return; if (yt.on) { pos = frac * dur; yt.p.seekTo(pos, true); paintProgress(); return; } if (!audio.src) { audio.src = srcFor(cur); } pos = frac * dur; audio.currentTime = pos; paintProgress(); }
+
   if ("mediaSession" in navigator) {
     const ms = navigator.mediaSession, set = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };
     set("play", () => { if (audio.paused) toggle(); }); set("pause", () => { if (!audio.paused) toggle(); });
@@ -193,7 +202,7 @@
     const k = key(t); lyr = { key: k, synced: [], idx: -1 };
     lyrMsg("looking for lyrics…");
     try {
-      const r = await fetch(`/api/lyrics?title=${encodeURIComponent(t.title)}&artist=${encodeURIComponent(t.artist)}&dur=${Math.round(t.dur || 0)}`);
+      const r = await fetch(api(`/api/lyrics?title=${encodeURIComponent(t.title)}&artist=${encodeURIComponent(t.artist)}&dur=${Math.round(t.dur || 0)}`));
       const d = await r.json(); if (lyr.key !== k) return;
       if (!d.found) return lyrMsg("no lyrics found for this song.");
       if (d.instrumental) return lyrMsg("instrumental ♪");
@@ -253,7 +262,7 @@
   let rec = [], recLoaded = false;
   async function loadRec() {
     if (recLoaded) return; recLoaded = true;
-    try { const d = await (await fetch("/api/music/recommended")).json(); rec = d.tracks || []; renderRec(); if (!rec.length && $("#mrec")) $("#mrec").innerHTML = '<div class="msg">recommendations aren\'t available right now. search for a song above.</div>'; }
+    try { const d = await (await fetch(api("/api/music/recommended"))).json(); rec = d.tracks || []; renderRec(); if (!rec.length && $("#mrec")) $("#mrec").innerHTML = '<div class="msg">recommendations aren\'t available right now. search for a song above.</div>'; }
     catch { recLoaded = false; if ($("#mrec")) $("#mrec").innerHTML = '<div class="msg">can\'t reach the music server, so there are no recommendations yet.</div>'; }
   }
   function renderRec() {
@@ -288,7 +297,7 @@
   }
   function renderStatus() {
     const s = lastStatus; if (!s) { $("#msrc").innerHTML = ""; return; }
-    $("#msrc").innerHTML = `<span>youtube music: ${s.youtube ? "on" : "off"}</span><span>·</span><span>soundcloud: ${s.soundcloud ? "on" : "off"}</span>`;
+    $("#msrc").innerHTML = `<span>youtube music: ${s.youtube ? "on" : "off"}</span><span>·</span><span>soundcloud: ${s.soundcloud ? "on" : "off"}</span><span>·</span><span>audius: ${s.audius ? "on" : "off"}</span>`;
   }
   function renderPlaylists() {
     const box = $("#plist");
@@ -353,15 +362,15 @@
   $("#msearch").addEventListener("submit", async (e) => {
     e.preventDefault();
     const q = $("#mq").value.trim(); if (!q) return;
-    renderResults("searching youtube music and soundcloud…");
+    renderResults("searching youtube music, soundcloud and audius…");
     try {
-      const r = await fetch("/api/music/search?q=" + encodeURIComponent(q));
+      const r = await fetch(api("/api/music/search?q=" + encodeURIComponent(q)));
       if (r.status === 404) throw new Error("music search needs the Nex.Velo server (the Railway site), not a static host.");
       const data = await r.json();
       lastStatus = data.status; renderStatus();
       results = data.results || []; renderRec();
       if (!results.length && data.errors && Object.keys(data.errors).length) {
-        renderResults("both sources failed: " + Object.entries(data.errors).map(([k, v]) => `${k} (${v})`).join(", "));
+        renderResults("every source failed: " + Object.entries(data.errors).map(([k, v]) => `${k} (${v})`).join(", "));
       } else renderResults();
     } catch (err) {
       results = [];
@@ -408,11 +417,12 @@
     if (!box) return;
     box.innerHTML = '<span class="chip">checking sources…</span>';
     try {
-      const r = await fetch("/api/music/status"); if (!r.ok) throw 0;
+      const r = await fetch(api("/api/music/status")); if (!r.ok) throw 0;
       const s = (await r.json()).status;
-      box.innerHTML = `<span class="chip ${s.youtube ? "ok" : ""}">youtube music: ${s.youtube ? "connected" : "unavailable"}</span><span class="chip ${s.soundcloud ? "ok" : ""}">soundcloud: ${s.soundcloud ? "connected" : "unavailable"}</span>`;
+      box.innerHTML = `<span class="chip ${s.youtube ? "ok" : ""}">youtube music: ${s.youtube ? "connected" : "unavailable"}</span><span class="chip ${s.soundcloud ? "ok" : ""}">soundcloud: ${s.soundcloud ? "connected" : "unavailable"}</span><span class="chip ${s.audius ? "ok" : ""}">audius: ${s.audius ? "connected" : "not used yet"}</span>`;
     } catch { box.innerHTML = '<span class="chip">music server not reachable</span>'; }
   }
+
   window.NV.onTab = (t) => {
     musicTab = t.kind === "music"; paintMini();
     if (musicTab && cur && lyr.key !== key(cur)) loadLyrics(cur);
