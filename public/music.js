@@ -19,6 +19,8 @@
     plus: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
     minus: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>',
     x: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    prev: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14"/><path d="M19 5.5v13L9 12z" style="fill:currentColor"/></svg>',
+    next: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14"/><path d="M5 5.5v13L15 12z" style="fill:currentColor"/></svg>',
   };
 
   let playlists = load("nexvelo.playlists", []); // [{id, name, tracks: []}]
@@ -146,6 +148,7 @@
   const setPlaying = (v) => {
     playing = v; const i = v ? ICON.pause : ICON.play;
     $("#m-play").innerHTML = i; $("#np-play").innerHTML = i;
+    for (const id of ["#mini-cov", "#np-cov"]) $(id)?.classList.toggle("off", !v); // the record spins only while music plays
     if ("mediaSession" in navigator) navigator.mediaSession.playbackState = v ? "playing" : "paused";
     paintPip();
   };
@@ -233,6 +236,10 @@
   /* ---------- the fold-away arrows (our own, no emoji), the volume control and the styles for them ---------- */
   const symbols = /[\u2190-\u21FF\u25A0-\u25FF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u{1F000}-\u{1FAFF}]/gu;
   $("#m-toggle").innerHTML = ICON.down; $("#m-toggle").setAttribute("aria-label", "Fold the player away");
+  for (const [id, icon, label] of [["#m-prev", ICON.prev, "Previous song"], ["#np-prev", ICON.prev, "Previous song"], ["#m-next", ICON.next, "Next song"], ["#np-next", ICON.next, "Next song"]]) {
+    const b = $(id); if (b) { b.innerHTML = icon; b.setAttribute("aria-label", label); }
+  }
+  for (const id of ["#mini-cov", "#np-cov"]) $(id)?.classList.add("nv-rec", "off");
   {
     const op = $("#m-open"); // keep its label, swap any emoji or arrow character for our arrow
     for (const n of [...op.childNodes]) {
@@ -247,6 +254,11 @@
     #m-toggle .nvi,#m-open .nvi{transition:transform .2s cubic-bezier(.4,0,.2,1)}
     #m-toggle:hover .nvi{transform:translateY(2px)} #m-open:hover .nvi{transform:translateY(-2px)}
     .ib{display:inline-flex;align-items:center;justify-content:center}
+    #m-prev,#m-next,#np-prev,#np-next{display:inline-flex;align-items:center;justify-content:center}
+    @keyframes nv-spin{to{transform:rotate(360deg)}}
+    .nv-rec{border-radius:50%;object-fit:cover;aspect-ratio:1/1;animation:nv-spin 5s linear infinite;-webkit-mask-image:radial-gradient(circle closest-side at center,transparent 0 9%,#000 10%);mask-image:radial-gradient(circle closest-side at center,transparent 0 9%,#000 10%)}
+    .nv-rec.off{animation-play-state:paused}
+    @media (prefers-reduced-motion:reduce){.nv-rec{animation:none}}
     #prog i{transition:none}
     .nv-vol{display:flex;align-items:center;gap:.625rem;flex:1 1 100%;grid-column:1/-1;margin-top:.5rem;color:inherit}
     .nv-vol button{width:1.75rem;height:1.75rem;padding:0;border-radius:999px;border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:transparent;color:inherit;opacity:.8;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;transition:opacity .15s,transform .1s}
@@ -442,6 +454,7 @@
     savePl(); if (tab() === "playlists") renderPlaylists();
   }
   pop.addEventListener("click", (e) => { const b = e.target.closest("[data-add]"); if (b) { addTo(b.dataset.add, pop._t); pop.hidden = true; } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pop.hidden) { pop.hidden = true; e.preventDefault(); } });
   document.addEventListener("pointerdown", (e) => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('[data-act="add"]')) pop.hidden = true; });
 
   /* ---------- panel events ---------- */
