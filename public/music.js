@@ -14,6 +14,11 @@
   const ICON = {
     play: '<svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>',
     pause: '<svg viewBox="0 0 24 24"><path d="M7 5v14M17 5v14"/></svg>',
+    down: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+    up: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>',
+    plus: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+    minus: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>',
+    x: '<svg class="nvi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   };
 
   let playlists = load("nexvelo.playlists", []); // [{id, name, tracks: []}]
@@ -40,6 +45,7 @@
   audio.addEventListener("play", () => { if (!yt.on) setPlaying(true); });
   audio.addEventListener("pause", () => { if (yt.on) return; setPlaying(false); persist(true); });
   audio.addEventListener("ended", () => { if (!yt.on) next(); });
+  audio.addEventListener("durationchange", () => { if (isFinite(audio.duration) && audio.duration > 0) { dur = audio.duration; paintProgress(); } });
   audio.addEventListener("loadedmetadata", () => {
     if (isFinite(audio.duration)) dur = audio.duration;
     if (resumeAt > 1 && resumeAt < dur) audio.currentTime = resumeAt;
@@ -91,7 +97,7 @@
   function stopEmbed() { yt.on = false; try { yt.p?.stopVideo?.(); } catch {} }
   function ytState(e) {
     if (!yt.on) return;
-    if (e.data === 1) { setPlaying(true); embedWait?.(true); } else if (e.data === 2) setPlaying(false); else if (e.data === 0) next();
+    if (e.data === 1) { try { yt.p.setVolume(volume * 100); } catch {} setPlaying(true); embedWait?.(true); } else if (e.data === 2) setPlaying(false); else if (e.data === 0) next();
   }
   function ytError() {
     const w = embedWait; stopEmbed();
@@ -152,7 +158,15 @@
   }
   function next() { if (qi < queue.length - 1) playAt(queue, qi + 1); else { setPlaying(false); } }
   function prev() { if (pos > 4) seek(0); else if (qi > 0) playAt(queue, qi - 1); else seek(0); }
-  function seek(frac) { if (!cur || !dur) return; if (yt.on) { pos = frac * dur; yt.p.seekTo(pos, true); paintProgress(); return; } if (!audio.src) { audio.src = srcFor(cur); } pos = frac * dur; audio.currentTime = pos; paintProgress(); }
+  const canSeek = () => isFinite(audio.duration) && audio.duration > 0 && audio.seekable && audio.seekable.length > 0;
+  function seek(frac) {
+    if (!cur || !dur) return;
+    frac = Math.min(1, Math.max(0, frac));
+    if (yt.on) { pos = frac * dur; yt.p.seekTo(pos, true); paintProgress(); return; }
+    if (!audio.src) { audio.src = srcFor(cur); resumeAt = frac * dur; pos = resumeAt; paintProgress(); return; } // restored from last visit: jump once it starts
+    if (!canSeek()) { paintProgress(); return toast("this stream can't be skipped around. it only plays from the start."); }
+    pos = frac * audio.duration; audio.currentTime = pos; paintProgress();
+  }
 
   if ("mediaSession" in navigator) {
     const ms = navigator.mediaSession, set = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };
@@ -182,15 +196,101 @@
     $("#mini-t").textContent = cur.title; $("#mini-a").textContent = `${cur.artist} · ${srcName(cur.source)}`;
     paintProgress();
   }
-  function paintProgress() { $("#prog i").style.width = dur ? Math.min(100, (pos / dur) * 100) + "%" : "0"; }
-  $("#m-toggle").addEventListener("click", () => { collapsed = true; paintMini(); persist(true); });
-  $("#m-open").addEventListener("click", () => { collapsed = false; paintMini(); persist(true); });
+  function paintProgress() { if ($("#prog").dragging?.()) return; $("#prog i").style.width = dur ? Math.min(100, (pos / dur) * 100) + "%" : "0"; }
+  const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  async function setCollapsed(v) {
+    if (v === collapsed) return;
+    collapsed = v; persist(true);
+    const mini = $("#mini"), opener = $("#m-open");
+    try {
+      if (v) { // fold away: slide down and fade, then the small opener pops in
+        if (!mini.hidden && !calm()) await mini.animate([{ transform: "translateY(0) scale(1)", opacity: 1 }, { transform: "translateY(20px) scale(.97)", opacity: 0 }], { duration: 220, easing: "cubic-bezier(.4,0,.2,1)" }).finished;
+        paintMini();
+        if (!calm()) opener.animate([{ transform: "translateY(10px) scale(.85)", opacity: 0 }, { transform: "translateY(0) scale(1)", opacity: 1 }], { duration: 240, easing: "cubic-bezier(.2,.9,.3,1.2)" });
+      } else { // open: the player slides up
+        paintMini();
+        if (!calm()) mini.animate([{ transform: "translateY(20px) scale(.97)", opacity: 0 }, { transform: "translateY(0) scale(1)", opacity: 1 }], { duration: 260, easing: "cubic-bezier(.2,.8,.2,1)" });
+      }
+    } catch { paintMini(); }
+  }
+  $("#m-toggle").addEventListener("click", () => setCollapsed(true));
+  $("#m-open").addEventListener("click", () => setCollapsed(false));
   $("#m-play").addEventListener("click", toggle);
   $("#m-next").addEventListener("click", next);
   $("#m-prev").addEventListener("click", prev);
   $("#mini-info").addEventListener("click", () => openMusic());
-  $("#prog").addEventListener("pointerdown", (e) => { const r = e.currentTarget.getBoundingClientRect(); seek((e.clientX - r.left) / r.width); });
+  { // drag the bar to move through the song (the song jumps when you let go, so it doesn't stutter)
+    const bar = $("#prog"); let drag = false;
+    const frac = (e) => { const r = bar.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); };
+    bar.addEventListener("pointerdown", (e) => { drag = true; bar.setPointerCapture(e.pointerId); $("#prog i").style.width = frac(e) * 100 + "%"; });
+    bar.addEventListener("pointermove", (e) => { if (drag) $("#prog i").style.width = frac(e) * 100 + "%"; });
+    const end = (e) => { if (!drag) return; drag = false; seek(frac(e)); };
+    bar.addEventListener("pointerup", end); bar.addEventListener("pointercancel", () => { drag = false; paintProgress(); });
+    bar.dragging = () => drag;
+  }
   $("#m-play").innerHTML = ICON.play; $("#np-play").innerHTML = ICON.play;
+
+  /* ---------- the fold-away arrows (our own, no emoji), the volume control and the styles for them ---------- */
+  const symbols = /[\u2190-\u21FF\u25A0-\u25FF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u{1F000}-\u{1FAFF}]/gu;
+  $("#m-toggle").innerHTML = ICON.down; $("#m-toggle").setAttribute("aria-label", "Fold the player away");
+  {
+    const op = $("#m-open"); // keep its label, swap any emoji or arrow character for our arrow
+    for (const n of [...op.childNodes]) {
+      if (n.nodeType === 3) n.textContent = n.textContent.replace(symbols, "");
+      else if (n.nodeType === 1 && !n.matches("img,svg,canvas") && !n.querySelector("img,svg,canvas")) { n.textContent = n.textContent.replace(symbols, ""); if (!n.textContent.trim()) n.remove(); }
+    }
+    op.insertAdjacentHTML("afterbegin", ICON.up); op.setAttribute("aria-label", "Open the player");
+  }
+  document.head.insertAdjacentHTML("beforeend", `<style id="nv-music-style">
+    .nvi{width:1.125rem;height:1.125rem;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+    #m-toggle,#m-open{display:inline-flex;align-items:center;justify-content:center;gap:.375rem}
+    #m-toggle .nvi,#m-open .nvi{transition:transform .2s cubic-bezier(.4,0,.2,1)}
+    #m-toggle:hover .nvi{transform:translateY(2px)} #m-open:hover .nvi{transform:translateY(-2px)}
+    .ib{display:inline-flex;align-items:center;justify-content:center}
+    #prog i{transition:none}
+    .nv-vol{display:flex;align-items:center;gap:.625rem;flex:1 1 100%;grid-column:1/-1;margin-top:.5rem;color:inherit}
+    .nv-vol button{width:1.75rem;height:1.75rem;padding:0;border-radius:999px;border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:transparent;color:inherit;opacity:.8;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;transition:opacity .15s,transform .1s}
+    .nv-vol button:hover{opacity:1} .nv-vol button:active{transform:scale(.92)}
+    .nv-vol button .nvi{width:.875rem;height:.875rem}
+    .nv-vbar{position:relative;flex:1;height:1.5rem;cursor:pointer;touch-action:none;outline:none}
+    .nv-vbar::before{content:"";position:absolute;left:0;right:0;top:50%;height:.375rem;margin-top:-.1875rem;border-radius:999px;background:color-mix(in srgb,currentColor 25%,transparent)}
+    .nv-vbar i{position:absolute;left:0;top:50%;height:.375rem;margin-top:-.1875rem;border-radius:999px;background:currentColor;pointer-events:none}
+    .nv-vbar:focus-visible::before{outline:2px solid currentColor;outline-offset:3px}
+  </style>`);
+
+  // volume: a bar with a minus on its left and a plus on its right. it is remembered between visits
+  let volume = Math.min(1, Math.max(0, Number(load("nexvelo.volume", 1)) || 0)); if (!isFinite(volume)) volume = 1;
+  const volRow = document.createElement("div");
+  volRow.className = "nv-vol";
+  volRow.innerHTML = `<button type="button" id="m-vdn" aria-label="Volume down">${ICON.minus}</button><div class="nv-vbar" id="m-vbar" role="slider" tabindex="0" aria-label="Volume" aria-valuemin="0" aria-valuemax="100"><i></i></div><button type="button" id="m-vup" aria-label="Volume up">${ICON.plus}</button>`;
+  $("#mini").appendChild(volRow);
+  function setVolume(v, quiet) {
+    volume = Math.min(1, Math.max(0, Math.round(v * 100) / 100));
+    audio.volume = volume; try { yt.p?.setVolume?.(volume * 100); } catch {}
+    $("#m-vbar i").style.width = volume * 100 + "%"; $("#m-vbar").setAttribute("aria-valuenow", Math.round(volume * 100));
+    if (!quiet) store("nexvelo.volume", volume);
+  }
+  {
+    const bar = $("#m-vbar"); let drag = false;
+    const at = (e) => { const r = bar.getBoundingClientRect(); return (e.clientX - r.left) / r.width; };
+    bar.addEventListener("pointerdown", (e) => { drag = true; bar.setPointerCapture(e.pointerId); setVolume(at(e), true); });
+    bar.addEventListener("pointermove", (e) => { if (drag) setVolume(at(e), true); });
+    bar.addEventListener("pointerup", (e) => { drag = false; setVolume(at(e)); });
+    bar.addEventListener("keydown", (e) => { const d = { ArrowLeft: -.05, ArrowDown: -.05, ArrowRight: .05, ArrowUp: .05 }[e.key]; if (d) { e.preventDefault(); setVolume(volume + d); } });
+    $("#m-vdn").addEventListener("click", () => setVolume(volume - .1));
+    $("#m-vup").addEventListener("click", () => setVolume(volume + .1));
+    setVolume(volume, true);
+  }
+
+  // the time bar is redrawn every frame from the real playback position, not just a few times a second
+  (function tick() {
+    if (!yt.on && !audio.paused && !audio.seeking) {
+      pos = audio.currentTime || 0;
+      if (isFinite(audio.duration) && audio.duration > 0) dur = audio.duration;
+      paintProgress(); syncLyrics();
+    }
+    requestAnimationFrame(tick);
+  })();
   $("#np-play").addEventListener("click", toggle); $("#np-next").addEventListener("click", next); $("#np-prev").addEventListener("click", prev);
   $("#np-pop").addEventListener("click", () => popOut()); $("#m-pop").addEventListener("click", () => popOut());
 
@@ -283,7 +383,7 @@
   const tab = () => $(".mtabs .on")?.dataset.mt;
   const markNow = () => $$(".trow").forEach((r) => r.classList.toggle("now", !!cur && r.dataset.k === key(cur)));
   const cover = (t) => `<img src="${esc(t.thumb)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`;
-  const row = (t, i, extra = "+") => `<div class="trow" data-i="${i}" data-k="${esc(key(t))}">${cover(t)}<div class="tm"><b>${esc(t.title)}</b><span>${esc(t.artist)} · ${srcName(t.source)}${t.dur ? " · " + fmt(t.dur) : ""}</span></div><button class="ib" data-act="${extra === "+" ? "add" : "rm"}" aria-label="${extra === "+" ? "Add to playlist" : "Remove"}">${extra === "+" ? "+" : "×"}</button></div>`;
+  const row = (t, i, extra = "+") => `<div class="trow" data-i="${i}" data-k="${esc(key(t))}">${cover(t)}<div class="tm"><b>${esc(t.title)}</b><span>${esc(t.artist)} · ${srcName(t.source)}${t.dur ? " · " + fmt(t.dur) : ""}</span></div><button class="ib" data-act="${extra === "+" ? "add" : "rm"}" aria-label="${extra === "+" ? "Add to playlist" : "Remove"}">${extra === "+" ? ICON.plus : ICON.x}</button></div>`;
 
   function renderResults(msg) {
     const box = $("#mresults");
@@ -291,7 +391,7 @@
     if (!results.length) { box.innerHTML = '<div class="msg">no matches. try another search.</div>'; return; }
     const b = results[0];
     box.innerHTML =
-      `<div class="best" data-i="0" data-k="${esc(key(b))}">${cover(b)}<div class="tm"><small>BEST MATCH · ${srcName(b.source).toUpperCase()}</small><b>${esc(b.title)}</b><span>${esc(b.artist)}${b.dur ? " · " + fmt(b.dur) : ""}</span></div><button class="ib" data-act="add" aria-label="Add to playlist">+</button></div>` +
+      `<div class="best" data-i="0" data-k="${esc(key(b))}">${cover(b)}<div class="tm"><small>BEST MATCH · ${srcName(b.source).toUpperCase()}</small><b>${esc(b.title)}</b><span>${esc(b.artist)}${b.dur ? " · " + fmt(b.dur) : ""}</span></div><button class="ib" data-act="add" aria-label="Add to playlist">${ICON.plus}</button></div>` +
       results.slice(1).map((t, i) => row(t, i + 1)).join("");
     markNow();
   }
