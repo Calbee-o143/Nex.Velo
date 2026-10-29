@@ -124,6 +124,7 @@
       } else el = await proxyFrame(target);
       el.addEventListener("load", () => { $("#gvmsg").textContent = ""; });
       $("#gplay").appendChild(el);
+      hookKeys(el);
       if (g.play) watchBlank(el, g);
       setTimeout(() => { $("#gvmsg").textContent = ""; }, 12000);
       if (!isolated) toast("couldn't isolate the game, showing its page");
@@ -133,16 +134,42 @@
   // Game pages served by this server report their own errors. If a game opens but stays blank, show what it reported.
   let reports = [];
   window.addEventListener("message", (e) => {
+    if (e.data?.nvKey === "Escape" && current) return back(); // Escape pressed inside a game
     if (typeof e.data?.nvGame === "string" && current) { reports.push(e.data.nvGame); if (reports.length > 6) reports.shift(); }
   });
+  // Escape also works while the game itself has the keyboard focus (the frame would otherwise swallow it)
+  function hookKeys(el) {
+    const attach = () => { try { const w = el.contentWindow; if (w && !w.__nvEsc) { w.__nvEsc = true; w.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); back(); } }, true); } } catch {} };
+    attach(); el.addEventListener("load", attach);
+  }
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && current && !$("#g-view").hidden) back(); });
+
+  // Compatibility mode: the page is fetched and written into an empty frame, which is how the GN Math site itself runs these games.
+  async function compat(g) {
+    if (!g._target) return;
+    $("#gplay").innerHTML = ""; $("#gvmsg").textContent = "opening " + g.name + " in compatibility mode…";
+    const el = document.createElement("iframe");
+    el.allow = "fullscreen; autoplay; gamepad; clipboard-write; accelerometer; gyroscope"; el.setAttribute("allowfullscreen", ""); el.style.cssText = "width:100%;height:100%;border:0;background:#000";
+    $("#gplay").appendChild(el);
+    try {
+      const r = await fetch(g._target); if (!r.ok) throw new Error("HTTP " + r.status);
+      let html = await r.text();
+      const baseTag = '<base href="' + g._target.replace(/[^/]*$/, "") + '">';
+      if (!/<base[\s>]/i.test(html)) html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + baseTag) : baseTag + html;
+      const d = el.contentDocument; d.open(); d.write(html); d.close();
+      hookKeys(el); $("#gvmsg").textContent = ""; watchBlank(el, g);
+    } catch (e) { $("#gvmsg").textContent = "compatibility mode failed: " + (e.message || e); }
+  }
   function watchBlank(el, g) {
     reports = [];
     setTimeout(() => {
       if (current !== g) return;
       try {
         const d = el.contentDocument;
-        if (d && d.body && !d.body.innerText.trim() && !d.querySelector("canvas, iframe, video, img, svg"))
-          $("#gvmsg").textContent = "this game opened but looks blank. the page reported: " + (reports.join(" | ") || "nothing (it may still be loading)");
+        if (d && d.body && !d.body.innerText.trim() && !d.querySelector("canvas, iframe, video, img, svg")) {
+          if (!g._compat) { g._compat = true; compat(g); return; } // first try the other way of opening it
+          $("#gvmsg").textContent = "this game opened but looks blank, even in compatibility mode. the page reported: " + (reports.join(" | ") || "nothing (it may still be loading)");
+        }
       } catch {}
     }, 8000);
   }
@@ -154,6 +181,13 @@
   $("#gmore").addEventListener("click", more);
   $("#ggrid").addEventListener("click", (e) => { const c = e.target.closest(".gcard"); if (c) play(list[+c.dataset.i]); });
   $("#g-back").addEventListener("click", back);
+  { // a button to try compatibility mode by hand
+    const rl = $("#g-reload");
+    if (rl && !$("#g-compat")) {
+      const cb = rl.cloneNode(false); cb.id = "g-compat"; cb.textContent = "compat mode"; cb.title = "open this game another way if it is blank";
+      rl.insertAdjacentElement("afterend", cb); cb.addEventListener("click", () => { if (current?.play) { current._compat = true; compat(current); } });
+    }
+  }
   $("#g-reload").addEventListener("click", () => {
     const f = $("#gplay iframe"); if (!f || !current) return;
     try { f.contentWindow.location.reload(); } catch { play(current); }
