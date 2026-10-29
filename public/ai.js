@@ -137,6 +137,7 @@
       if (!r.ok) {
         let d = {}; try { d = await r.json(); } catch {}
         if (r.status === 404) throw new Error("the ai needs the Nex.Velo server (the Railway site), not a static host.");
+        if ([502, 503, 504].includes(r.status) && !d.error) throw new Error("the Nex.Velo server didn't answer (HTTP " + r.status + "). it may be restarting, or Nex.AI's model may have run out of memory. wait a minute and try again. if it keeps happening, open Settings and run the full check.");
         if (d.error === "vision_unavailable") throw new Error("nex.ai can't look at images or screens yet. ask again with just text.");
         throw new Error(prettyErr(d.error || "") || "nex.ai returned an error (" + r.status + ")");
       }
