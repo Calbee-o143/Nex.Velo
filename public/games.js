@@ -7,6 +7,8 @@
   const PAGE = 60;
   const SOURCES = ["cherri", "gn", "obsidian", "duckmath", "weslack"];
   // These two are opened as whole websites through the proxy (no game list to read)
+  // If a library's files won't load, its own website can still be opened through the proxy. (Change these addresses here if a site moves.)
+  const SITES = { gn: { label: "GN Math website", url: "https://gn-math.github.io/" }, cherri: { label: "Cherri website", url: "https://cherrion.top/" } };
   const PROXIED = { duckmath: "https://duckmath.org/", weslack: "https://weslack.com/" };
   const LABEL = { cherri: "Cherri", gn: "GN Math", obsidian: "Obsidian", duckmath: "DuckMath", weslack: "Weslack" };
 
@@ -22,6 +24,11 @@
     const b = document.createElement("button");
     b.type = "button"; b.className = "btn"; b.textContent = "run full check"; b.style.marginLeft = ".5rem";
     b.addEventListener("click", runCheck); el.appendChild(b);
+    if (SITES[src]) { // a way out that doesn't depend on the game files
+      const w = document.createElement("button");
+      w.type = "button"; w.className = "btn"; w.textContent = "open the " + SITES[src].label.toLowerCase() + " instead"; w.style.marginLeft = ".5rem";
+      w.addEventListener("click", () => play({ name: SITES[src].label, site: SITES[src].url })); el.appendChild(w);
+    }
   };
   async function runCheck() {
     const el = $("#gmsg"); el.style.whiteSpace = "pre-wrap"; el.textContent = "checking every game source… this can take up to a minute";
@@ -51,7 +58,7 @@
       const r = await fetch(abs("/api/games/list?src=" + key));
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.games?.length) throw new Error(d.error || "the server answered " + r.status);
-      return (lists[key] = d.games);
+      return (lists[key] = SITES[key] ? [{ name: SITES[key].label, site: SITES[key].url }, ...d.games] : d.games);
     } catch (e) { msg("couldn't load the " + (LABEL[key] || key) + " games. " + (e.message || e), true); return null; }
   }
 
