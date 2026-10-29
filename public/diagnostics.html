@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nex.Velo Diagnostics</title>
+<style>
+  :root { --bg:#fff; --fg:#111; --mut:#666; --line:#ddd; --card:#f6f6f6; --ok:#0a7a3a; --bad:#c0262d; --info:#2255c4; --run:#9a6a00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#000; --fg:#f2f2f2; --mut:#9a9a9a; --line:#2a2a2a; --card:#0d0d0d; --ok:#3fcf7a; --bad:#ff6b72; --info:#6f9cff; --run:#e0b040; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:56rem; margin:0 auto; padding:1.5rem 1rem 4rem; }
+  h1 { margin:0 0 .25rem; font-size:1.5rem; letter-spacing:-.01em; }
+  header p { margin:0 0 1rem; color:var(--mut); }
+  .bar { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin-bottom:1.25rem; position:sticky; top:0; background:var(--bg); padding:.5rem 0; z-index:2; }
+  button { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.4rem .8rem; cursor:pointer; }
+  button:hover { border-color:var(--fg); }
+  button.primary { background:var(--fg); color:var(--bg); border-color:var(--fg); }
+  button:disabled { opacity:.5; cursor:default; }
+  #summary { color:var(--mut); margin-left:auto; font-variant-numeric:tabular-nums; }
+  h2 { font-size:.8125rem; text-transform:uppercase; letter-spacing:.08em; color:var(--mut); margin:1.75rem 0 .5rem; }
+  .t { background:var(--card); border:1px solid var(--line); border-left-width:4px; border-radius:.5rem; padding:.6rem .8rem; margin-bottom:.5rem; }
+  .t.pass { border-left-color:var(--ok); } .t.fail { border-left-color:var(--bad); } .t.info { border-left-color:var(--info); } .t.run { border-left-color:var(--run); }
+  .row { display:flex; gap:.6rem; align-items:center; }
+  .name { font-weight:600; flex:1; min-width:0; }
+  .tag { font-size:.6875rem; letter-spacing:.06em; border-radius:999px; padding:.1rem .5rem; border:1px solid currentColor; }
+  .pass .tag { color:var(--ok); } .fail .tag { color:var(--bad); } .info .tag { color:var(--info); } .run .tag { color:var(--run); } .idle .tag { color:var(--mut); }
+  .ms { color:var(--mut); font-size:.75rem; font-variant-numeric:tabular-nums; }
+  .slow { font-size:.6875rem; color:var(--mut); border:1px dashed var(--line); border-radius:999px; padding:.05rem .4rem; }
+  .detail { margin:.35rem 0 0; font:.8125rem/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color:var(--mut); white-space:pre-wrap; word-break:break-word; }
+  .kids { margin:.4rem 0 0; padding:0; list-style:none; font:.8125rem/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .kids li { padding:.15rem 0 .15rem .75rem; border-left:2px solid var(--line); margin-bottom:.15rem; word-break:break-word; }
+  .kids li.g { border-left-color:var(--ok); } .kids li.b { border-left-color:var(--bad); }
+  .kids b { font-weight:600; }
+  .kids .why { color:var(--mut); }
+  label.opt { color:var(--mut); font-size:.875rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Nex.Velo Diagnostics</h1>
+    <p>Tests this browser, the server, music, games and the AI, and shows exactly what works and what fails. Press <b>Copy report</b> and paste it to whoever is fixing things.</p>
+  </header>
+  <div class="bar">
+    <button class="primary" id="run-quick">Run quick tests</button>
+    <button id="run-all">Run everything (slow)</button>
+    <button id="copy">Copy report</button>
+    <span id="summary"></span>
+  </div>
+  <div id="list"></div>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  // If this page is opened from another host, add ?api=https://your-server to test that server instead.
+  const API = (new URLSearchParams(location.search).get("api") || "").replace(/\/$/, "");
+  const url = (p) => API + p;
+  const $ = (s, r = document) => r.querySelector(s);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const bytes = (n) => (n > 1e6 ? (n / 1e6).toFixed(1) + " MB" : n > 1e3 ? Math.round(n / 1e3) + " KB" : n + " B");
+  const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error((label || "this test") + " took longer than " + Math.round(ms / 1000) + " seconds")), ms))]);
+
+  async function getJSON(path, ms = 25000) {
+    const r = await withTimeout(fetch(url(path), { cache: "no-store" }), ms, path);
+    const text = await r.text(); let d = null; try { d = JSON.parse(text); } catch {}
+    if (!r.ok) throw new Error("HTTP " + r.status + (d && (d.error || d.message) ? ": " + (d.error || d.message) : ""));
+    return d ?? text;
+  }
+  // reads at most `max` bytes, then stops the download
+  async function sniff(path, headers, max) {
+    const r = await withTimeout(fetch(url(path), { headers, cache: "no-store" }), 30000, path);
+    const type = r.headers.get("content-type") || "", len = r.headers.get("content-length");
+    let got = 0, head = "";
+    if (r.ok || r.status === 206) {
+      const rd = r.body.getReader(), dec = new TextDecoder("utf-8", { fatal: false });
+      while (got < max) { const { value, done } = await rd.read(); if (done) break; got += value.length; if (head.length < 400000) head += dec.decode(value, { stream: true }); }
+      try { rd.cancel(); } catch {}
+    } else { try { head = (await r.text()).slice(0, 600); } catch {} }
+    return { status: r.status, ok: r.ok || r.status === 206, type, len, got, head };
+  }
+
+  /* ---------- shared lookups (each is fetched once and reused by later tests) ---------- */
+  const memo = {};
+  const once = (k, fn) => (memo[k] ||= fn());
+  const SONG = "blinding lights the weeknd";
+  const music = () => once("music", () => getJSON("/api/music/search?q=" + encodeURIComponent(SONG)));
+  const games = (src) => once("games:" + src, async () => (await getJSON("/api/games/list?src=" + src, 90000)).games || []);
+  const streamPath = (t) => `/api/music/stream?source=${t.source}&id=${encodeURIComponent(t.id)}&q=${encodeURIComponent((t.artist + " " + t.title).trim())}`;
+  const picks = (list) => [list[0], list[Math.floor(list.length / 2)]].filter((g, i, a) => g && a.indexOf(g) === i);
+
+  /* ---------- the tests ---------- */
+  const tests = [];
+  const def = (group, name, opts, fn) => tests.push({ id: "t" + tests.length, group, name, slow: !!opts.slow, fn, state: "idle", ms: 0, detail: "", kids: [] });
+
+  // --- this browser
+  def("This browser", "Browser storage (settings, history and playlists need it)", {}, async () => {
+    localStorage.setItem("nv-diag", "1"); if (localStorage.getItem("nv-diag") !== "1") throw new Error("localStorage did not keep a value"); localStorage.removeItem("nv-diag");
+    await new Promise((res, rej) => { const q = indexedDB.open("nv-diag"); q.onsuccess = () => { q.result.close(); indexedDB.deleteDatabase("nv-diag"); res(); }; q.onerror = () => rej(q.error || new Error("IndexedDB refused to open")); });
+    return "localStorage and IndexedDB both work";
+  });
+  def("This browser", "Browser features", {}, async () => {
+    const f = [
+      ["WebSocket (the proxy connection)", "WebSocket" in window], ["Service workers (the proxy)", "serviceWorker" in navigator], ["WebAssembly", typeof WebAssembly === "object"],
+      ["Audio", "AudioContext" in window || "webkitAudioContext" in window], ["Media keys / lock screen controls", "mediaSession" in navigator], ["Pop-out player (Document Picture-in-Picture)", "documentPictureInPicture" in window],
+      ["Speech recognition (voice chat)", "SpeechRecognition" in window || "webkitSpeechRecognition" in window], ["Speech playback", "speechSynthesis" in window],
+      ["Fullscreen", !!document.fullscreenEnabled], ["Clipboard", !!navigator.clipboard], ["Screen sharing", !!navigator.mediaDevices?.getDisplayMedia],
+      ["Cross-origin isolated", !!window.crossOriginIsolated],
+    ];
+    return { state: "info", detail: f.filter((x) => x[1]).length + " of " + f.length + " features available", kids: f.map(([n, ok]) => ({ name: n, ok, detail: ok ? "available" : "not available" })) };
+  });
+  def("This browser", "Service workers", {}, async () => {
+    if (!navigator.serviceWorker) throw new Error("this browser has no service workers, so the proxy cannot run");
+    const regs = await navigator.serviceWorker.getRegistrations();
+    return { state: "info", detail: regs.length ? regs.length + " registered on this site" : "none registered on this site yet (open Nex.Velo once so the proxy can register)", kids: regs.map((r) => ({ name: r.scope, ok: !!r.active, detail: r.active ? "active" : "not active yet" })) };
+  });
+  def("This browser", "Can this device reach the sites Nex.Velo uses?", {}, async () => {
+    const sites = [
+      ["cdn.jsdelivr.net (game files)", "https://cdn.jsdelivr.net/npm/lodash@4/package.json"], ["raw.githubusercontent.com (games, music data)", "https://raw.githubusercontent.com/github/gitignore/main/Go.gitignore"],
+      ["gitlab.com (Cherri games)", "https://gitlab.com/gitlab-org/gitlab/-/raw/master/LICENSE"], ["huggingface.co (AI model)", "https://huggingface.co/api/models/HuggingFaceTB/SmolLM2-360M-Instruct"],
+      ["api.audius.co (music)", "https://api.audius.co/v1/tracks/trending?app_name=NexVelo"], ["soundcloud.com (music)", "https://soundcloud.com/favicon.ico"], ["www.youtube.com (music)", "https://www.youtube.com/favicon.ico"],
+    ];
+    const kids = await Promise.all(sites.map(async ([name, u]) => {
+      const s = performance.now();
+      try { await withTimeout(fetch(u, { mode: "no-cors", cache: "no-store" }), 9000, name); return { name, ok: true, detail: "reachable (" + Math.round(performance.now() - s) + " ms)" }; }
+      catch { return { name, ok: false, detail: "blocked or unreachable from this device" }; }
+    }));
+    return { state: "info", detail: "This is the browser's own network. A blocked site here is a reason a page could come up blank. The server fetches most things for you, so some of these do not matter.", kids };
+  });
+
+  // --- the server
+  def("Server", "Server answers", {}, async () => { const s = performance.now(); const d = await getJSON("/api/live"); return "answered in " + Math.round(performance.now() - s) + " ms, " + d.count + " visitor(s) online"; });
+  def("Server", "Version", {}, async () => { const d = await getJSON("/version.json?t=" + Date.now()); return { state: "info", detail: typeof d === "object" ? JSON.stringify(d) : String(d).slice(0, 200) }; });
+  def("Server", "Wisp connection (the proxy's tunnel)", {}, async () => {
+    const base = (API || location.origin).replace(/^http/, "ws");
+    return withTimeout(new Promise((res, rej) => {
+      let ws; try { ws = new WebSocket(base + "/wisp/"); } catch (e) { return rej(e); }
+      ws.onopen = () => { ws.close(); res("opened " + base + "/wisp/"); };
+      ws.onerror = () => rej(new Error("couldn't open " + base + "/wisp/. the proxy can't browse sites without it"));
+    }), 8000, "the Wisp connection");
+  });
+  def("Server", "Server dependency check (every outside service the server uses)", {}, async () => {
+    const d = await getJSON("/api/diag", 90000);
+    const kids = Object.entries(d.checks || {}).map(([k, v]) => ({ name: k, ok: v.ok, detail: (v.ok ? v.info : v.error) + " (" + v.ms + " ms)" }));
+    kids.unshift({ name: "server memory", ok: d.enoughMemoryForModel !== false, detail: "using " + d.rssMB + " MB, node " + d.node });
+    if (d.nexAi) kids.push({ name: "Nex.AI model", ok: d.nexAi.error ? false : null, detail: (d.nexAi.ready ? "loaded" : d.nexAi.loading ? "loading " + d.nexAi.progress : "not loaded yet") + " (" + d.nexAi.model + ")" + (d.nexAi.error ? " | " + d.nexAi.error : "") });
+    return { detail: kids.filter((k) => k.ok === false).length ? "something below failed" : "everything the server needs answered", kids };
+  });
+
+  // --- music
+  def("Music", "Music search (YouTube Music, SoundCloud, Audius)", {}, async () => {
+    const d = await music(); const bySrc = {};
+    for (const r of d.results || []) bySrc[r.source] = (bySrc[r.source] || 0) + 1;
+    const kids = ["youtube", "soundcloud", "audius"].map((s) => ({ name: s, ok: !!bySrc[s], detail: bySrc[s] ? bySrc[s] + " result(s)" : (d.errors && d.errors[s]) || "no results" }));
+    if (!(d.results || []).length) throw new Error("no results from any source: " + Object.entries(d.errors || {}).map(([k, v]) => k + " (" + v + ")").join(", "));
+    return { state: kids.some((k) => !k.ok) ? "info" : "pass", detail: (d.results || []).length + " results, top: " + d.results[0].artist + " - " + d.results[0].title + " (" + d.results[0].source + ")", kids };
+  });
+  def("Music", "Music audio streams (the server fetches the first bytes of a song from each source)", {}, async () => {
+    const d = await music(), kids = [];
+    for (const src of ["youtube", "soundcloud", "audius"]) {
+      const t = (d.results || []).find((r) => r.source === src);
+      if (!t) { kids.push({ name: src, ok: null, detail: "no search result from this source to test" }); continue; }
+      const q = `/api/music/stream?source=${t.source}&id=${encodeURIComponent(t.id)}&q=`; // no fallback on purpose: this tests the source itself
+      try { const r = await sniff(q, { range: "bytes=0-4095" }, 4096); kids.push({ name: src + ": " + t.title, ok: r.ok && r.got > 0, detail: r.ok ? "HTTP " + r.status + ", " + (r.type || "unknown type") + ", got " + bytes(r.got) : "HTTP " + r.status + " " + r.head.slice(0, 220) }); }
+      catch (e) { kids.push({ name: src + ": " + t.title, ok: false, detail: String(e.message || e) }); }
+    }
+    return { detail: kids.filter((k) => k.ok).length + " of 3 sources can deliver audio", kids, state: kids.some((k) => k.ok) ? (kids.some((k) => k.ok === false) ? "info" : "pass") : "fail" };
+  });
+  def("Music", "Music playback (a real song plays in this browser, quietly)", {}, async () => {
+    const d = await music(); const t = (d.results || [])[0]; if (!t) throw new Error("no song to play");
+    const a = new Audio(); a.volume = 0.05; a.src = url(streamPath(t));
+    try {
+      try { await a.play(); } catch (e) { if (e.name === "NotAllowedError") throw new Error("the browser blocked autoplay. press this test's Run button on its own"); throw new Error("the audio would not start: " + (a.error ? "code " + a.error.code + " " + (a.error.message || "") : e.message)); }
+      await withTimeout(new Promise((res, rej) => { const iv = setInterval(() => { if (a.currentTime > 1.2) { clearInterval(iv); res(); } if (a.error) { clearInterval(iv); rej(new Error("audio error " + a.error.code + " " + (a.error.message || ""))); } }, 200); }), 25000, "playback");
+      return "played " + a.currentTime.toFixed(1) + "s of " + t.artist + " - " + t.title + ". length " + (isFinite(a.duration) ? Math.round(a.duration) + "s" : "unknown (this stream cannot be skipped around)");
+    } finally { try { a.pause(); a.removeAttribute("src"); a.load(); } catch {} }
+  });
+  def("Music", "Lyrics", {}, async () => { const t = ((await music()).results || [])[0]; if (!t) throw new Error("no song to look up"); const d = await getJSON(`/api/lyrics?title=${encodeURIComponent(t.title)}&artist=${encodeURIComponent(t.artist)}&dur=${t.dur || 0}`); if (!d.found) throw new Error("no lyrics found for " + t.title); return (d.synced && d.synced.length ? d.synced.length + " timed lines" : "plain lyrics") + " for " + d.title; });
+  def("Music", "Recommended songs", { slow: true }, async () => { const d = await getJSON("/api/music/recommended", 90000); if (!(d.tracks || []).length) throw new Error("no recommendations came back"); return d.tracks.length + " songs"; });
+
+  // --- games
+  const SRCS = [["cherri", "Cherri"], ["gn", "GN Math"], ["obsidian", "Obsidian"]];
+  def("Games", "Game lists (Cherri, GN Math, Obsidian)", {}, async () => {
+    const kids = [];
+    for (const [k, label] of SRCS) { try { const g = await games(k); kids.push({ name: label, ok: g.length > 0, detail: g.length + " games, e.g. " + g.slice(0, 3).map((x) => x.name).join(", ") }); } catch (e) { kids.push({ name: label, ok: false, detail: String(e.message || e) }); } }
+    return { detail: kids.filter((k) => k.ok).length + " of " + SRCS.length + " lists loaded", kids };
+  });
+  def("Games", "Game files (the server fetches real games from each library)", {}, async () => {
+    const kids = [];
+    for (const [k, label] of SRCS) {
+      let list; try { list = await games(k); } catch (e) { kids.push({ name: label, ok: false, detail: "no list to test: " + (e.message || e) }); continue; }
+      for (const g of picks(list.filter((x) => x.play))) {
+        try {
+          const r = await sniff(g.play, {}, 2e6);
+          const rewrittenLeft = (r.head.match(/cdn\.jsdelivr\.net\/gh\/gn-math|raw\.githubusercontent\.com\/gn-math|cdn\.jsdelivr\.net\/gl\/x8r/g) || []).length;
+          const title = (r.head.match(/<title[^>]*>([^<]{0,80})/i) || [])[1] || "";
+          kids.push({ name: label + ": " + g.name, ok: r.ok && r.got > 0, detail: r.ok ? "HTTP " + r.status + ", " + (r.type || "no type") + ", " + (r.len ? bytes(+r.len) : "size unknown") + (title ? ", title \"" + title.trim() + "\"" : "") + (rewrittenLeft ? ", " + rewrittenLeft + " CDN address(es) left in the first part" : "") : "HTTP " + r.status + " " + r.head.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 260) });
+        } catch (e) { kids.push({ name: label + ": " + g.name, ok: false, detail: String(e.message || e) }); }
+      }
+    }
+    return { detail: kids.filter((k) => k.ok).length + " of " + kids.length + " game files loaded", kids };
+  });
+  def("Games", "Game pages actually show something (loads each in a hidden frame for 10 seconds)", { slow: true }, async () => {
+    const kids = [];
+    for (const [k, label] of SRCS) {
+      let list; try { list = await games(k); } catch (e) { kids.push({ name: label, ok: false, detail: "no list to test" }); continue; }
+      for (const g of picks(list.filter((x) => x.play))) {
+        const f = document.createElement("iframe"), reports = [];
+        f.style.cssText = "position:fixed;left:0;top:0;width:640px;height:480px;opacity:0;pointer-events:none;border:0"; f.allow = "autoplay";
+        const onMsg = (e) => { if (e.source === f.contentWindow && typeof e.data?.nvGame === "string") reports.push(e.data.nvGame); };
+        addEventListener("message", onMsg); document.body.appendChild(f); f.src = url(g.play);
+        await sleep(10000);
+        let state = "", ok = false;
+        try {
+          const d = f.contentDocument, text = (d.body && d.body.innerText || "").trim(), rich = d.querySelector("canvas, iframe, video, img, svg");
+          ok = !!(text || rich); state = !d.body || !d.body.children.length ? "the page is empty" : ok ? "the page shows content" + (d.title ? " (title: " + d.title.slice(0, 50) + ")" : "") : "the page is BLANK";
+        } catch (e) { state = "could not inspect the frame (" + e.message + ")"; }
+        removeEventListener("message", onMsg); f.remove();
+        kids.push({ name: label + ": " + g.name, ok, detail: state + (reports.length ? ". the page reported: " + reports.slice(0, 5).join(" | ") : ok ? "" : ". the page reported no errors, so it may still have been loading") });
+      }
+    }
+    return { detail: kids.filter((k) => k.ok).length + " of " + kids.length + " pages showed content", kids };
+  });
+
+  // --- AI
+  def("AI", "Nex.AI status", {}, async () => {
+    const d = await getJSON("/api/ai/status");
+    return { state: d.error ? "fail" : "info", detail: (d.ready ? "model loaded" : d.loading ? "loading " + (d.progress || "") : "not loaded yet") + ", model " + d.model + (d.memoryMB ? ", " + d.memoryMB + " MB in use" : "") + (d.error ? "\nlast error: " + d.error : "") };
+  });
+  def("AI", "Nex.AI answers a question (first run downloads the model, which can take minutes)", { slow: true }, async () => {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 240000);
+    try {
+      const r = await fetch(url("/api/ai/chat"), { method: "POST", headers: { "content-type": "application/json" }, signal: ctl.signal, body: JSON.stringify({ model: "local", web: false, messages: [{ role: "system", content: "You are a test. Answer in one short sentence." }, { role: "user", content: "Say the word ready." }] }) });
+      if (!r.ok) { const t = await r.text(); throw new Error("HTTP " + r.status + " " + t.slice(0, 300) + (r.status >= 502 ? " (the server did not answer. it may have run out of memory)" : "")); }
+      const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "", text = "", lastStatus = "";
+      for (;;) {
+        const { value, done } = await rd.read(); if (done) break;
+        buf += dec.decode(value, { stream: true }); const lines = buf.split("\n"); buf = lines.pop();
+        for (const l of lines) { if (!l.startsWith("data:") || l.includes("[DONE]")) continue; try { const j = JSON.parse(l.slice(5)); if (j.status) lastStatus = j.status; const c = j.choices?.[0]?.delta?.content; if (c) text += c; } catch {} }
+      }
+      if (!text.trim()) throw new Error("the AI sent no answer" + (lastStatus ? " (last status: " + lastStatus + ")" : ""));
+      if (text.trim().startsWith("\u26A0")) throw new Error(text.trim());
+      return "answered: " + text.trim().slice(0, 160);
+    } catch (e) { throw new Error(e.name === "AbortError" ? "no answer within 4 minutes" : e.message); }
+    finally { clearTimeout(timer); }
+  });
+
+  /* ---------- running and showing ---------- */
+  let busy = false;
+  async function run(t) {
+    t.state = "run"; t.detail = ""; t.kids = []; render();
+    const s = performance.now();
+    try {
+      const r = await t.fn(t);
+      if (typeof r === "string") { t.detail = r; t.state = "pass"; }
+      else { t.detail = r.detail || ""; t.kids = r.kids || []; t.state = r.state || (t.kids.some((k) => k.ok === false) ? "fail" : "pass"); }
+    } catch (e) { t.state = "fail"; t.detail = String(e && e.message || e); }
+    t.ms = Math.round(performance.now() - s); render();
+  }
+  async function runMany(list) {
+    if (busy) return; busy = true; setButtons(true);
+    for (const k in memo) delete memo[k]; // fresh data each time
+    for (const t of list) await run(t);
+    busy = false; setButtons(false);
+  }
+  const setButtons = (b) => { for (const id of ["run-quick", "run-all"]) $("#" + id).disabled = b; };
+  const TAG = { idle: "NOT RUN", run: "RUNNING", pass: "PASS", fail: "FAIL", info: "INFO" };
+
+  function render() {
+    let html = "", last = "";
+    for (const t of tests) {
+      if (t.group !== last) { last = t.group; html += "<h2>" + esc(t.group) + "</h2>"; }
+      html += '<div class="t ' + t.state + '"><div class="row"><span class="name">' + esc(t.name) + "</span>" + (t.slow ? '<span class="slow">slow</span>' : "") +
+        (t.ms ? '<span class="ms">' + t.ms + " ms</span>" : "") + '<span class="tag">' + TAG[t.state] + '</span><button data-run="' + t.id + '"' + (busy ? " disabled" : "") + ">Run</button></div>" +
+        (t.detail ? '<div class="detail">' + esc(t.detail) + "</div>" : "") +
+        (t.kids.length ? '<ul class="kids">' + t.kids.map((k) => '<li class="' + (k.ok === true ? "g" : k.ok === false ? "b" : "") + '"><b>' + esc(k.name) + '</b> <span class="why">' + (k.ok === true ? "ok. " : k.ok === false ? "FAILED. " : "") + esc(k.detail || "") + "</span></li>").join("") + "</ul>" : "") + "</div>";
+    }
+    $("#list").innerHTML = html;
+    const c = (s) => tests.filter((t) => t.state === s).length;
+    $("#summary").textContent = c("pass") + " passed, " + c("fail") + " failed" + (c("run") ? ", running" : "");
+  }
+
+  function report() {
+    const out = ["Nex.Velo diagnostics", "time: " + new Date().toString(), "page: " + location.href, "browser: " + navigator.userAgent, ""];
+    for (const t of tests) {
+      out.push("[" + TAG[t.state] + "] " + t.group + " / " + t.name + (t.ms ? " (" + t.ms + " ms)" : ""));
+      if (t.detail) out.push("    " + t.detail.replace(/\n/g, "\n    "));
+      for (const k of t.kids) out.push("    - " + (k.ok === true ? "ok " : k.ok === false ? "FAILED " : "") + k.name + ": " + (k.detail || ""));
+    }
+    return out.join("\n");
+  }
+
+  $("#list").addEventListener("click", (e) => { const b = e.target.closest("[data-run]"); if (!b || busy) return; const t = tests.find((x) => x.id === b.dataset.run); busy = true; setButtons(true); run(t).finally(() => { busy = false; setButtons(false); render(); }); });
+  $("#run-quick").addEventListener("click", () => runMany(tests.filter((t) => !t.slow)));
+  $("#run-all").addEventListener("click", () => runMany(tests));
+  $("#copy").addEventListener("click", async () => {
+    const text = report(), b = $("#copy");
+    try { await navigator.clipboard.writeText(text); b.textContent = "Copied"; }
+    catch { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); b.textContent = "Copied"; } catch { b.textContent = "Copy failed"; } ta.remove(); }
+    setTimeout(() => { b.textContent = "Copy report"; }, 1800);
+  });
+  render();
+})();
+</script>
+</body>
+</html>
