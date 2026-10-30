@@ -207,12 +207,12 @@
     const mini = $("#mini"), opener = $("#m-open");
     try {
       if (v) { // fold away: slide down and fade, then the small opener pops in
-        if (!mini.hidden && !calm()) await mini.animate([{ transform: "translateY(0) scale(1)", opacity: 1 }, { transform: "translateY(20px) scale(.97)", opacity: 0 }], { duration: 220, easing: "cubic-bezier(.4,0,.2,1)" }).finished;
+        if (!mini.hidden && !calm()) await mini.animate([{ transform: "translateX(-50%) translateY(0) scale(1)", opacity: 1 }, { transform: "translateX(-50%) translateY(20px) scale(.97)", opacity: 0 }], { duration: 220, easing: "cubic-bezier(.4,0,.2,1)" }).finished;
         paintMini();
-        if (!calm()) opener.animate([{ transform: "translateY(10px) scale(.85)", opacity: 0 }, { transform: "translateY(0) scale(1)", opacity: 1 }], { duration: 240, easing: "cubic-bezier(.2,.9,.3,1.2)" });
+        if (!calm()) opener.animate([{ transform: "translateX(-50%) translateY(10px) scale(.85)", opacity: 0 }, { transform: "translateX(-50%) translateY(0) scale(1)", opacity: 1 }], { duration: 240, easing: "cubic-bezier(.2,.9,.3,1.2)" });
       } else { // open: the player slides up
         paintMini();
-        if (!calm()) mini.animate([{ transform: "translateY(20px) scale(.97)", opacity: 0 }, { transform: "translateY(0) scale(1)", opacity: 1 }], { duration: 260, easing: "cubic-bezier(.2,.8,.2,1)" });
+        if (!calm()) mini.animate([{ transform: "translateX(-50%) translateY(20px) scale(.97)", opacity: 0 }, { transform: "translateX(-50%) translateY(0) scale(1)", opacity: 1 }], { duration: 260, easing: "cubic-bezier(.2,.8,.2,1)" });
       }
     } catch { paintMini(); }
   }
@@ -256,9 +256,9 @@
     .ib{display:inline-flex;align-items:center;justify-content:center}
     #m-prev,#m-next,#np-prev,#np-next{display:inline-flex;align-items:center;justify-content:center}
     @keyframes nv-spin{to{transform:rotate(360deg)}}
-    .nv-rec{border-radius:50%;object-fit:cover;aspect-ratio:1/1;animation:nv-spin 5s linear infinite;-webkit-mask-image:radial-gradient(circle closest-side at center,transparent 0 9%,#000 10%);mask-image:radial-gradient(circle closest-side at center,transparent 0 9%,#000 10%)}
-    .nv-rec.off{animation-play-state:paused}
-    @media (prefers-reduced-motion:reduce){.nv-rec{animation:none}}
+    img.nv-rec{border-radius:50%;object-fit:cover;aspect-ratio:1/1;animation:nv-spin 5s linear infinite;-webkit-mask-image:radial-gradient(circle closest-side at center,transparent 0 9%,#000 10%);mask-image:radial-gradient(circle closest-side at center,transparent 0 9%,#000 10%)}
+    img.nv-rec.off{animation-play-state:paused}
+    @media (prefers-reduced-motion:reduce){img.nv-rec{animation:none}}
     #prog i{transition:none}
     .nv-vol{display:flex;align-items:center;gap:.625rem;flex:1 1 100%;grid-column:1/-1;margin-top:.5rem;color:inherit}
     .nv-vol button{width:1.75rem;height:1.75rem;padding:0;border-radius:999px;border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:transparent;color:inherit;opacity:.8;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;transition:opacity .15s,transform .1s}
@@ -392,7 +392,7 @@
   const savePl = () => store("nexvelo.playlists", playlists);
 
   /* ---------- rendering ---------- */
-  const tab = () => $(".mtabs .on")?.dataset.mt;
+  const tab = () => $("#page-music .mtabs .on")?.dataset.mt;
   const markNow = () => $$(".trow").forEach((r) => r.classList.toggle("now", !!cur && r.dataset.k === key(cur)));
   const cover = (t) => `<img src="${esc(t.thumb)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`;
   const row = (t, i, extra = "+") => `<div class="trow" data-i="${i}" data-k="${esc(key(t))}">${cover(t)}<div class="tm"><b>${esc(t.title)}</b><span>${esc(t.artist)} · ${srcName(t.source)}${t.dur ? " · " + fmt(t.dur) : ""}</span></div><button class="ib" data-act="${extra === "+" ? "add" : "rm"}" aria-label="${extra === "+" ? "Add to playlist" : "Remove"}">${extra === "+" ? ICON.plus : ICON.x}</button></div>`;
@@ -464,13 +464,14 @@
     if (t) showTab(t);
   }
   function showTab(t) {
-    $$(".mtabs button").forEach((b) => b.classList.toggle("on", b.dataset.mt === t));
+    window.NV.syncChrome && setTimeout(() => window.NV.syncChrome(), 0);
+    $$("#page-music .mtabs button").forEach((b) => b.classList.toggle("on", b.dataset.mt === t));
     $$(".mt").forEach((m) => m.classList.toggle("on", m.id === "mt-" + t));
     if (t === "playlists") renderPlaylists();
     if (t === "recent") renderRecent();
   }
-  $(".mtabs").addEventListener("click", (e) => { const b = e.target.closest("[data-mt]"); if (b) showTab(b.dataset.mt); });
-  $("#open-music").addEventListener("click", () => openMusic());
+  $("#page-music .mtabs").addEventListener("click", (e) => { const b = e.target.closest("[data-mt]"); if (b) showTab(b.dataset.mt); });
+  
 
   $("#msearch").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -521,7 +522,7 @@
 
   /* ---------- extension toggle + status chips ---------- */
   function applyMusicToggle() {
-    $("#open-music").hidden = !settings.music;
+    
     if (!settings.music) { if (!audio.paused) audio.pause(); if (yt.on) yt.p?.pauseVideo?.(); }
     paintMini();
   }
@@ -534,21 +535,7 @@
       const s = (await r.json()).status;
       box.innerHTML = `<span class="chip ${s.youtube ? "ok" : ""}">youtube music: ${s.youtube ? "connected" : "unavailable"}</span><span class="chip ${s.soundcloud ? "ok" : ""}">soundcloud: ${s.soundcloud ? "connected" : "unavailable"}</span><span class="chip ${s.audius ? "ok" : ""}">audius: ${s.audius ? "connected" : "not used yet"}</span>`;
     } catch { box.innerHTML = '<span class="chip">music server not reachable</span>'; }
-    box.insertAdjacentHTML("beforeend", '<button class="btn" type="button" id="music-diag" style="margin-top:.5rem">run full check</button><pre id="music-diag-out" style="white-space:pre-wrap;font-size:.75rem;margin-top:.5rem" hidden></pre>');
   }
-  // Tests every outside service the server relies on (music, games, the AI model) and shows what works and what fails, with the reason.
-  document.addEventListener("click", async (e) => {
-    if (!e.target.closest("#music-diag")) return;
-    const out = $("#music-diag-out"); out.hidden = false; out.textContent = "checking… this can take a few minutes (it also tries to start Nex.AI, which downloads its model the first time)";
-    try {
-      const d = await (await fetch(api("/api/diag?load=1"))).json();
-      out.textContent = [
-        `server: node ${d.node}, memory in use ${d.rssMB} MB, enough memory for Nex.AI: ${d.enoughMemoryForModel ? "yes" : "NO"}`,
-        `nex.ai: ${d.nexAi.ready ? "ready" : d.nexAi.loading ? "loading " + d.nexAi.progress : "not loaded"} (${d.nexAi.model})${d.nexAi.error ? " · " + d.nexAi.error : ""}`, "",
-        ...Object.entries(d.checks).map(([k, v]) => `${v.ok ? "✓" : "✗"} ${k} (${v.ms} ms) ${v.ok ? v.info : v.error}`),
-      ].join("\n");
-    } catch { out.textContent = "couldn't reach /api/diag. the server may be on an older version. redeploy the newest lib/api.js."; }
-  });
 
   window.NV.onTab = (t) => {
     musicTab = t.kind === "music"; paintMini();
@@ -557,6 +544,7 @@
     if (musicTab) loadRec();
   };
   window.NV.applyMusicToggle = applyMusicToggle;
+  window.NV.musicShowTab = (t) => showTab(t);
   window.NV.refreshMusicChips = refreshMusicChips;
   window.addEventListener("beforeunload", () => persist(true));
   applyMusicToggle();
