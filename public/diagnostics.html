@@ -34,6 +34,11 @@
   .kids b { font-weight:600; }
   .kids .why { color:var(--mut); }
   label.opt { color:var(--mut); font-size:.875rem; }
+  /* when shown inside Settings: no page chrome, and the site's own colours */
+  html.embed body { background:transparent; }
+  html.embed main { max-width:none; padding:0 0 2rem; }
+  html.embed header h1 { display:none; }
+  html.embed .bar { background:transparent; }
 </style>
 </head>
 <body>
@@ -56,6 +61,15 @@
   "use strict";
   // If this page is opened from another host, add ?api=https://your-server to test that server instead.
   const API = (new URLSearchParams(location.search).get("api") || "").replace(/\/$/, "");
+  if (new URLSearchParams(location.search).get("embed") === "1") {
+    document.documentElement.classList.add("embed");
+    try { // take the colours and font of the Nex.Velo page that holds this
+      const cs = parent.getComputedStyle(parent.document.documentElement), g = (v) => cs.getPropertyValue(v).trim(), r = document.documentElement.style;
+      if (g("--bg")) r.setProperty("--bg", g("--bg")); if (g("--fg")) r.setProperty("--fg", g("--fg")); if (g("--dim")) r.setProperty("--mut", g("--dim"));
+      if (g("--btn")) r.setProperty("--card", g("--btn")); r.setProperty("--line", "color-mix(in srgb, " + (g("--fg") || "#888") + " 22%, transparent)");
+      const ff = parent.getComputedStyle(parent.document.body).fontFamily; if (ff) document.body.style.fontFamily = ff;
+    } catch {}
+  }
   const url = (p) => API + p;
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
