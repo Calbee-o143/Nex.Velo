@@ -17,12 +17,12 @@
   const lists = {};
   let list = [], shown = 0, current = null;
 
-  // a message, with an optional button that tests every game source on the server and shows exactly what fails and why
+  // a message, with an optional button that opens Settings > Diagnostics (it tests every game source and shows exactly what fails)
   const msg = (t, check) => {
     const el = $("#gmsg"); el.style.whiteSpace = ""; el.textContent = t || "";
     if (!check) return;
     const b = document.createElement("button");
-    b.type = "button"; b.className = "btn"; b.textContent = "run full check"; b.style.marginLeft = ".5rem";
+    b.type = "button"; b.className = "btn"; b.textContent = "open diagnostics"; b.style.marginLeft = ".5rem";
     b.addEventListener("click", runCheck); el.appendChild(b);
     if (SITES[src]) { // a way out that doesn't depend on the game files
       const w = document.createElement("button");
@@ -30,14 +30,7 @@
       w.addEventListener("click", () => play({ name: SITES[src].label, site: SITES[src].url })); el.appendChild(w);
     }
   };
-  async function runCheck() {
-    const el = $("#gmsg"); el.style.whiteSpace = "pre-wrap"; el.textContent = "checking every game source… this can take up to a minute";
-    try {
-      const d = await (await fetch(abs("/api/diag"))).json();
-      const keys = ["gnMath", "gnFile", "cherri", "cherriFile", "obsidian", "obsidianFile"];
-      el.textContent = keys.filter((k) => d.checks[k]).map((k) => { const v = d.checks[k]; return `${v.ok ? "✓" : "✗"} ${k} (${v.ms} ms) ${v.ok ? v.info : v.error}`; }).join("\n");
-    } catch { el.textContent = "couldn't reach /api/diag. the server may be on an older version. redeploy the newest lib/api.js."; }
-  }
+  function runCheck() { window.NV.openSettings("diagnostics"); }
   // always a full address, so it works the same whether the page and the server share a host or not
   const abs = (p) => new URL(/^https?:/i.test(p) ? p : apiBase() + p, location.href).href;
 
@@ -63,6 +56,7 @@
   }
 
   async function showSource(key, auto) {
+    window.NV.syncChrome && setTimeout(() => window.NV.syncChrome(), 0);
     src = key; LS.set("nexvelo.games", JSON.stringify({ src }));
     document.querySelectorAll("#gtabs button").forEach((b) => b.classList.toggle("on", b.dataset.g === key));
     $("#ggrid").innerHTML = ""; $("#gcount").textContent = ""; $("#gmore").hidden = true;
@@ -134,12 +128,16 @@
   // Game pages served by this server report their own errors. If a game opens but stays blank, show what it reported.
   let reports = [];
   window.addEventListener("message", (e) => {
-    if (e.data?.nvKey === "Escape" && current) return back(); // Escape pressed inside a game
+    if (e.data?.nvKey === "Escape" && current) { // Escape pressed inside a game: the escape key (panic key) first, otherwise leave the game
+      const fake = { key: "Escape", repeat: false, altKey: false, ctrlKey: false, metaKey: false, target: null, preventDefault() {}, stopPropagation() {} };
+      if (window.NV.panic && window.NV.panic(fake)) return;
+      return back();
+    }
     if (typeof e.data?.nvGame === "string" && current) { reports.push(e.data.nvGame); if (reports.length > 6) reports.shift(); }
   });
   // Escape also works while the game itself has the keyboard focus (the frame would otherwise swallow it)
   function hookKeys(el) {
-    const attach = () => { try { const w = el.contentWindow; if (w && !w.__nvEsc) { w.__nvEsc = true; w.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); back(); } }, true); } } catch {} };
+    const attach = () => { try { const w = el.contentWindow; if (w && !w.__nvEsc) { w.__nvEsc = true; w.addEventListener("keydown", (e) => { if (window.NV.panic && window.NV.panic(e)) return; if (e.key === "Escape") { e.preventDefault(); back(); } }, true); } } catch {} };
     attach(); el.addEventListener("load", attach);
   }
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && current && !$("#g-view").hidden) back(); });
@@ -195,6 +193,7 @@
   $("#g-open").addEventListener("click", () => { if (current?._target) window.NV.openUrl(current._target); });
   $(".gscroll", $("#page-games")).addEventListener("scroll", (e) => { const el = e.target; if (!$("#gmore").hidden && el.scrollTop + el.clientHeight > el.scrollHeight - 400) more(); });
 
+  window.NV.gamesShowSource = (k, auto) => { back(); showSource(k, auto); };
   window.NV.onGamesOpen = () => {
     document.querySelectorAll("#gtabs button").forEach((b) => b.classList.toggle("on", b.dataset.g === src));
     if (!lists[src]) showSource(src);
