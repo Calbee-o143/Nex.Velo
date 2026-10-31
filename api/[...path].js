@@ -1,5 +1,5 @@
 // Runs the Nex.Velo API (AI, music, lyrics, bookmarks icons...) as a Vercel function, so those features work
-// from the same address as the site and don't depend on another server being up.
+// from the same address as the site and don't depend on another server being up
 // The proxy's Wisp connection still needs a real WebSocket server (Railway or similar).
 import Fastify from "fastify";
 import { registerApi } from "../lib/api.js";
