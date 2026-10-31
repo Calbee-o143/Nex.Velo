@@ -125,7 +125,7 @@
       ["Fullscreen", !!document.fullscreenEnabled], ["Clipboard", !!navigator.clipboard], ["Screen sharing", !!navigator.mediaDevices?.getDisplayMedia],
       ["Cross-origin isolated", !!window.crossOriginIsolated],
     ];
-    return { state: "info", detail: f.filter((x) => x[1]).length + " of " + f.length + " features available", kids: f.map(([n, ok]) => ({ name: n, ok, detail: ok ? "available" : "not available" })) };
+    return { state: "info", detail: f.filter((x) => x[1]).length + " of " + f.length + " features available", kids: f.map(([n, ok]) => ({ name: n, ok: ok ? true : null, detail: ok ? "available" : "not available (optional)" })) };
   });
   def("This browser", "Service workers", {}, async () => {
     if (!navigator.serviceWorker) throw new Error("this browser has no service workers, so the proxy cannot run");
@@ -193,7 +193,7 @@
       return "played " + a.currentTime.toFixed(1) + "s of " + t.artist + " - " + t.title + ". length " + (isFinite(a.duration) ? Math.round(a.duration) + "s" : "unknown (this stream cannot be skipped around)");
     } finally { try { a.pause(); a.removeAttribute("src"); a.load(); } catch {} }
   });
-  def("Music", "Lyrics", {}, async () => { const t = ((await music()).results || [])[0]; if (!t) throw new Error("no song to look up"); const d = await getJSON(`/api/lyrics?title=${encodeURIComponent(t.title)}&artist=${encodeURIComponent(t.artist)}&dur=${t.dur || 0}`); if (!d.found) throw new Error("no lyrics found for " + t.title); return (d.synced && d.synced.length ? d.synced.length + " timed lines" : "plain lyrics") + " for " + d.title; });
+  def("Music", "Lyrics", {}, async () => { const t = ((await music()).results || [])[0]; if (!t) throw new Error("no song to look up"); const d = await getJSON(`/api/lyrics?title=${encodeURIComponent(t.title)}&artist=${encodeURIComponent(t.artist)}&dur=${t.dur || 0}`); if (!d.found) return { state: "info", detail: "no lyrics found for " + t.title + " (normal for some songs)" }; return (d.synced && d.synced.length ? d.synced.length + " timed lines" : "plain lyrics") + " for " + d.title; });
   def("Music", "Recommended songs", { slow: true }, async () => { const d = await getJSON("/api/music/recommended", 90000); if (!(d.tracks || []).length) throw new Error("no recommendations came back"); return d.tracks.length + " songs"; });
 
   // --- games
@@ -279,7 +279,7 @@
     if (busy) return; busy = true; setButtons(true);
     for (const k in memo) delete memo[k]; // fresh data each time
     for (const t of list) await run(t);
-    busy = false; setButtons(false);
+    busy = false; setButtons(false); render(); // re-enable the per-test Run buttons
   }
   const setButtons = (b) => { for (const id of ["run-quick", "run-all"]) $("#" + id).disabled = b; };
   const TAG = { idle: "NOT RUN", run: "RUNNING", pass: "PASS", fail: "FAIL", info: "INFO" };
