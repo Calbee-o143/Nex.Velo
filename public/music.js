@@ -148,7 +148,7 @@
   const setPlaying = (v) => {
     playing = v; const i = v ? ICON.pause : ICON.play;
     $("#m-play").innerHTML = i; $("#np-play").innerHTML = i;
-    for (const id of ["#mini-cov", "#np-cov"]) $(id)?.classList.toggle("off", !v); // the record spins only while music plays
+    $("#np-cov")?.classList.toggle("off", !v); // the big cover on the Music page spins like a record only while music plays
     if ("mediaSession" in navigator) navigator.mediaSession.playbackState = v ? "playing" : "paused";
     paintPip();
   };
@@ -239,14 +239,10 @@
   for (const [id, icon, label] of [["#m-prev", ICON.prev, "Previous song"], ["#np-prev", ICON.prev, "Previous song"], ["#m-next", ICON.next, "Next song"], ["#np-next", ICON.next, "Next song"]]) {
     const b = $(id); if (b) { b.innerHTML = icon; b.setAttribute("aria-label", label); }
   }
-  for (const id of ["#mini-cov", "#np-cov"]) $(id)?.classList.add("nv-rec", "off");
+  $("#np-cov")?.classList.add("nv-rec", "off");
   {
-    const op = $("#m-open"); // keep its label, swap any emoji or arrow character for our arrow
-    for (const n of [...op.childNodes]) {
-      if (n.nodeType === 3) n.textContent = n.textContent.replace(symbols, "");
-      else if (n.nodeType === 1 && !n.matches("img,svg,canvas") && !n.querySelector("img,svg,canvas")) { n.textContent = n.textContent.replace(symbols, ""); if (!n.textContent.trim()) n.remove(); }
-    }
-    op.insertAdjacentHTML("afterbegin", ICON.up); op.setAttribute("aria-label", "Open the player");
+    const op = $("#m-open"); // exactly one arrow, pointing up
+    op.innerHTML = ICON.up; op.setAttribute("aria-label", "Open the player");
   }
   document.head.insertAdjacentHTML("beforeend", `<style id="nv-music-style">
     .nvi{width:1.125rem;height:1.125rem;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;flex:none}
@@ -261,8 +257,8 @@
     @media (prefers-reduced-motion:reduce){img.nv-rec{animation:none}}
     #prog i{transition:none}
     .nv-vol{display:flex;align-items:center;gap:.625rem;flex:1 1 100%;grid-column:1/-1;margin-top:.5rem;color:inherit}
-    .nv-vol button{width:1.75rem;height:1.75rem;padding:0;border-radius:999px;border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:transparent;color:inherit;opacity:.8;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;transition:opacity .15s,transform .1s}
-    .nv-vol button:hover{opacity:1} .nv-vol button:active{transform:scale(.92)}
+    .nv-vol button{width:1.75rem;height:1.75rem;padding:0;border-radius:999px;border:0;background:var(--btn);color:inherit;opacity:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none;transition:opacity .15s,transform .1s}
+    .nv-vol button:hover{background:var(--btn-h)} .nv-vol button:active{transform:scale(.92)}
     .nv-vol button .nvi{width:.875rem;height:.875rem}
     .nv-vbar{position:relative;flex:1;height:1.5rem;cursor:pointer;touch-action:none;outline:none}
     .nv-vbar::before{content:"";position:absolute;left:0;right:0;top:50%;height:.375rem;margin-top:-.1875rem;border-radius:999px;background:color-mix(in srgb,currentColor 25%,transparent)}
@@ -346,11 +342,15 @@
 
   /* ---------- pop-out controller (small floating window, no lyrics) ---------- */
   let pip = null;
+  // icons for the pop-out window (it is a separate page, so they carry their own sizes and colours)
+  const PIP = (inner) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+  const PIP_PREV = PIP('<path d="M6 5v14"/><path d="M19 5.5v13L9 12z" style="fill:currentColor"/>'), PIP_NEXT = PIP('<path d="M18 5v14"/><path d="M5 5.5v13L15 12z" style="fill:currentColor"/>');
+  const PIP_PLAY = PIP('<path d="M7 4.5l12 7.5-12 7.5z" style="fill:currentColor"/>'), PIP_PAUSE = PIP('<path d="M8 5v14M16 5v14"/>');
   function paintPip() {
     if (!pip || !cur) return;
     const d = pip.document, $$ = (i) => d.getElementById(i);
     $$("c").src = cur.thumb || ""; $$("t").textContent = cur.title; $$("a").textContent = `${cur.artist} · ${srcName(cur.source)}`;
-    $$("pl").textContent = playing ? "⏸" : "▶"; $$("f").style.width = dur ? Math.min(100, (pos / dur) * 100) + "%" : "0";
+    $$("pl").innerHTML = playing ? PIP_PAUSE : PIP_PLAY; $$("f").style.width = dur ? Math.min(100, (pos / dur) * 100) + "%" : "0";
   }
   setInterval(() => pip && paintPip(), 400);
   async function popOut() {
@@ -361,8 +361,9 @@
       pip = await documentPictureInPicture.requestWindow({ width: 360, height: 150 });
       const d = pip.document;
       d.body.style.cssText = "margin:0;background:#000;color:#fff;font-family:system-ui,sans-serif;display:flex;align-items:center;gap:12px;padding:12px;overflow:hidden";
-      d.body.innerHTML = '<img id="c" style="width:76px;height:76px;border-radius:12px;object-fit:cover;background:#111;flex:none"><div style="flex:1;min-width:0"><div id="t" style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div><div id="a" style="font-size:12px;opacity:.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div><div style="display:flex;gap:6px;margin-top:8px"><button id="p">⏮</button><button id="pl">▶</button><button id="n">⏭</button></div><div id="bar" style="height:6px;background:#333;border-radius:3px;margin-top:10px;cursor:pointer"><i id="f" style="display:block;height:100%;width:0;background:#fff;border-radius:3px"></i></div></div>';
-      d.querySelectorAll("button").forEach((b) => { b.style.cssText = "background:#111;color:#fff;border:1px solid #333;border-radius:10px;width:40px;height:32px;font-size:14px;cursor:pointer"; });
+      d.body.innerHTML = '<img id="c" style="width:76px;height:76px;border-radius:12px;object-fit:cover;background:#111;flex:none"><div style="flex:1;min-width:0"><div id="t" style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div><div id="a" style="font-size:12px;opacity:.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div><div style="display:flex;gap:6px;margin-top:8px"><button id="p" aria-label="Previous song"></button><button id="pl" aria-label="Play or pause"></button><button id="n" aria-label="Next song"></button></div><div id="bar" style="height:6px;background:#333;border-radius:3px;margin-top:10px;cursor:pointer"><i id="f" style="display:block;height:100%;width:0;background:#fff;border-radius:3px"></i></div></div>';
+      d.head.insertAdjacentHTML("beforeend", "<style>button{display:inline-flex;align-items:center;justify-content:center;background:#2b2b2b;color:#fff;border:0;border-radius:10px;width:42px;height:34px;cursor:pointer;transition:background .15s}button:hover{background:#161616}button:active{transform:scale(.94)}</style>");
+      d.getElementById("p").innerHTML = PIP_PREV; d.getElementById("n").innerHTML = PIP_NEXT; d.getElementById("pl").innerHTML = playing ? PIP_PAUSE : PIP_PLAY;
       d.getElementById("p").onclick = prev; d.getElementById("pl").onclick = toggle; d.getElementById("n").onclick = next;
       d.getElementById("bar").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); seek((e.clientX - r.left) / r.width); };
       pip.addEventListener("pagehide", () => { pip = null; });
