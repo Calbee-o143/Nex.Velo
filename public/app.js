@@ -9,7 +9,7 @@ get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d 
 set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
 del: (k) => { try { localStorage.removeItem(k); } catch {} },
 };
-const VERSION = "0.99.9";
+const VERSION = "0.99.11";
 // small icons of our own (used instead of text symbols)
 const ICON_X = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 const ICON_EDIT = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16z"/></svg>';
