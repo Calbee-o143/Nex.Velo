@@ -14,7 +14,8 @@
   header p { margin:0 0 1rem; color:var(--mut); }
   .bar { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin-bottom:1.25rem; position:sticky; top:0; background:var(--bg); padding:.5rem 0; z-index:2; }
   button { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.4rem .8rem; cursor:pointer; }
-  button:hover { border-color:var(--fg); }
+  button { border-color:transparent; transition:background .15s; }
+  button:hover { background:color-mix(in srgb, var(--card) 72%, #000); }
   button.primary { background:var(--fg); color:var(--bg); border-color:var(--fg); }
   button:disabled { opacity:.5; cursor:default; }
   #summary { color:var(--mut); margin-left:auto; font-variant-numeric:tabular-nums; }
@@ -35,10 +36,10 @@
   .kids .why { color:var(--mut); }
   label.opt { color:var(--mut); font-size:.875rem; }
   /* when shown inside Settings: no page chrome, and the site's own colours */
-  html.embed body { background:transparent; }
+  html.embed, html.embed body { background:var(--bg); }
   html.embed main { max-width:none; padding:0 0 2rem; }
   html.embed header h1 { display:none; }
-  html.embed .bar { background:transparent; }
+  html.embed .bar { background:var(--bg); }
 </style>
 </head>
 <body>
@@ -68,6 +69,7 @@
       if (g("--bg")) r.setProperty("--bg", g("--bg")); if (g("--fg")) r.setProperty("--fg", g("--fg")); if (g("--dim")) r.setProperty("--mut", g("--dim"));
       if (g("--btn")) r.setProperty("--card", g("--btn")); r.setProperty("--line", "color-mix(in srgb, " + (g("--fg") || "#888") + " 22%, transparent)");
       const ff = parent.getComputedStyle(parent.document.body).fontFamily; if (ff) document.body.style.fontFamily = ff;
+      if (cs.colorScheme) document.documentElement.style.colorScheme = cs.colorScheme; // otherwise the frame gets a white canvas on a dark page
     } catch {}
   }
   const url = (p) => API + p;
